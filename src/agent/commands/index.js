@@ -6,8 +6,6 @@ import { codingToolsList } from './coding_tools.js';
 let suppressNoDomainWarning = true;
 
 export const commandList = queryList.concat(actionsList).concat(codingToolsList);
-
-ca56909 (	modified:   package.json)
 const commandMap = {};
 for (let command of commandList) {
     commandMap[command.name] = command;
