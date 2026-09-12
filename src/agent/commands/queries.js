@@ -353,6 +353,25 @@ export const queryList = [
         }
     },
     {
+        name: '!world',
+        description: 'Show the persistent world model: self state, active project, known locations, structures, resource deposits, mobs/NPCs, fresh threats and proven recipes, with distances and last-seen ages.',
+        perform: async function (agent) {
+            if (!agent.world_model) return 'World model unavailable.';
+            return pad(agent.world_model.render());
+        }
+    },
+    {
+        name: '!where',
+        description: 'Query the persistent world model for the nearest known thing, e.g. !where village, !where iron, !where zombie, !where crafting_table. Also accepts a category: !where resources.',
+        params: {
+            'thing': { type: 'string', description: 'A location/resource/mob/structure name or category (locations, resources, threats, structures, entities, recipes).' },
+        },
+        perform: async function (agent, thing) {
+            if (!agent.world_model) return 'World model unavailable.';
+            return pad(agent.world_model.render(String(thing || '').trim()));
+        }
+    },
+    {
         name: '!listBuilds',
         description: 'List every build in the schematic library (Litematica .litematic, Sponge .schem, vanilla structure .nbt and blueprint .json files) with dimensions, block count and main materials.',
         perform: async function () {

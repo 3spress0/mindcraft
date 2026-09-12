@@ -153,6 +153,21 @@ State is saved to `bots/<name>/active_project.json` after every step, so restart
 - `!planResume` — continue a paused/interrupted project
 - `!planReplan` — discard the remaining steps and ask the planner for a new approach
 
+### Persistent world model and verified state transitions
+
+The planning loop is backed by a persistent **world model** (`bots/<name>/world_model.json`): the observation layer continuously turns Minecraft events (entity spawns/despawns, movement, damage, death) and *verified plan-step results* into timestamped, confidence-rated facts — locations (villages, bases, death points), resource deposits, structures, mobs/NPCs, threats, and crafting recipes the bot has actually performed. Volatile facts (threats, dropped items) decay and expire; durable facts survive restarts. The planner receives them as "KNOWN WORLD FACTS", so it routes to already-discovered villages and deposits, avoids depleted sources and known threats, and stops rediscovering the same things.
+
+Steps can also declare an **exact expected state transition** (the planner emits these for crafting/smelting steps):
+
+```json
+"expected_delta": { "inventory.hopper": 1, "inventory.iron_ingot": -5 }
+```
+
+If the executor reports success but the world did not change as declared, the critic deterministically fails the step (positive numbers = gain at least N, negative = exactly N consumed, optional tolerance) — an LLM claiming "crafted" without the inventory change is caught and retried/replanned instead of being trusted.
+
+- `!world` — inspect the model: self state, active project, locations, structures, deposits, mobs, fresh threats, recipes
+- `!where <thing>` — nearest known fact (`!where village`, `!where iron`, `!where zombie`) or a category list (`!where resources`)
+
 For a lighter-weight "just keep working on this" loop, `!goal <prompt>` still drives plain continuous self-prompting without plans or verification.
 
 ## Docker Container

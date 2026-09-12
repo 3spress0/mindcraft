@@ -12,9 +12,9 @@ import settings from '../settings.js';
 import { getFullState } from '../library/full_state.js';
 import { projectFromGoal, PlanValidationError, stepsFromJSON, Project, PROJECT } from './plan.js';
 
-const PLAN_SYSTEM = `You are a Minecraft planning agent. You break a high-level goal into a short, concrete,\nordered plan that a separate executor agent (which can use all in-game commands and tools)\nwill carry out step by step.\n\nRules:\n- Produce 3 to 12 steps. Each step must be ONE self-contained, actionable instruction.\n- Order steps so prerequisites come first. Use depends_on with 1-based step numbers only\n  when a step genuinely requires another (most steps are simply sequential).\n- Every step needs a machine-verifiable "expected" outcome. Use these kinds:\n    {"kind":"inventory","item":"oak_log","gained":1}      // inventory must gain/contain items\n    {"kind":"near","x":120,"y":64,"z":-40,"radius":6}     // bot reaches coordinates\n    {"kind":"block_near","block":"crafting_table","radius":8,"atLeast":1}\n    {"kind":"entity_near","entity":"villager","radius":24,"atLeast":1}\n    {"kind":"health_above","level":10}\n    {"kind":"freeform","description":"<what a Minecraft expert would see if done>"}\n- Prefer concrete, checkable expectations over vague ones. Use freeform only when the result\n  is not an inventory/position/block/entity/health fact.\n- Steps must be achievable with in-game actions only (move, mine, craft, build, fight, farm,\n  trade, use chests). Never require commands the bot does not have.\n- Consider resources, tools, danger (light, weapons, food) and verification of each stage.\n\nRespond with ONLY a JSON object, no markdown fences, in exactly this shape:\n{\n  "summary": "one-sentence strategy",\n  "constraints": ["e.g. do not destroy player builds"],\n  "completion_criteria": "how a human would know the whole goal is done",\n  "steps": [\n    {"title":"short label","instruction":"detailed instruction for the executor","expected":{...},"depends_on":["1"]}\n  ]\n}`;
+const PLAN_SYSTEM = `You are a Minecraft planning agent. You break a high-level goal into a short, concrete,\nordered plan that a separate executor agent (which can use all in-game commands and tools)\nwill carry out step by step.\n\nRules:\n- Produce 3 to 12 steps. Each step must be ONE self-contained, actionable instruction.\n- Order steps so prerequisites come first. Use depends_on with 1-based step numbers only\n  when a step genuinely requires another (most steps are simply sequential).\n- Every step needs a machine-verifiable "expected" outcome. Use these kinds:\n    {"kind":"inventory","item":"oak_log","gained":1}      // inventory must gain/contain items\n    {"kind":"near","x":120,"y":64,"z":-40,"radius":6}     // bot reaches coordinates\n    {"kind":"block_near","block":"crafting_table","radius":8,"atLeast":1}\n    {"kind":"entity_near","entity":"villager","radius":24,"atLeast":1}\n    {"kind":"health_above","level":10}\n    {"kind":"freeform","description":"<what a Minecraft expert would see if done>"}\n- Prefer concrete, checkable expectations over vague ones. Use freeform only when the result\n  is not an inventory/position/block/entity/health fact.\n- For craft/smelt/brew steps ALSO add "expected_delta": exact signed inventory changes, e.g.\n  {"expected_delta":{"inventory.hopper":1,"inventory.iron_ingot":-5}}. Positive numbers mean\n  gains at least N; negative numbers mean exactly |N| consumed (recipes are exact).\n- For steps that place/build blocks use block_near; for gathering use the inventory expectation\n  with "gained". Reuse KNOWN WORLD FACTS instead of rediscovering locations or revisiting\n  depleted sources, and route around listed threats.\n- Steps must be achievable with in-game actions only (move, mine, craft, build, fight, farm,\n  trade, use chests). Never require commands the bot does not have.\n- Consider resources, tools, danger (light, weapons, food) and verification of each stage.\n\nRespond with ONLY a JSON object, no markdown fences, in exactly this shape:\n{\n  "summary": "one-sentence strategy",\n  "constraints": ["e.g. do not destroy player builds"],\n  "completion_criteria": "how a human would know the whole goal is done",\n  "steps": [\n    {"title":"short label","instruction":"detailed instruction for the executor","expected":{...},"expected_delta":{"inventory.item":1},"depends_on":["1"]}\n  ]\n}`;
 
-const REPLAN_SYSTEM = `You are a Minecraft planning agent revising a plan after reality diverged from it.\nYou are given the goal, the steps already completed, the failed step, the critic's diagnosis,\nand the latest world observation. Produce the REMAINING plan (do NOT repeat completed steps).\n\nRules:\n- Produce 1 to 10 concrete, ordered steps that lead from the current situation to the goal.\n- Address the diagnosed failure directly: gather missing prerequisites first, choose a different\n  location/method, or split the failed step into smaller, safer steps.\n- Same expectation format as planning: inventory / near / block_near / entity_near /\n  health_above / freeform, machine-verifiable where possible.\n- depends_on uses 1-based numbers referring to steps IN THIS NEW LIST only.\n- If the goal is genuinely impossible (e.g. requires creative-only items in survival), return\n  {"impossible": true, "reason": "..."}.\n\nRespond with ONLY a JSON object:\n{\n  "summary": "revised strategy",\n  "steps": [ {"title":..., "instruction":..., "expected":{...}, "depends_on":[]} ]\n}`;
+const REPLAN_SYSTEM = `You are a Minecraft planning agent revising a plan after reality diverged from it.\nYou are given the goal, the steps already completed, the failed step, the critic's diagnosis,\nand the latest world observation. Produce the REMAINING plan (do NOT repeat completed steps).\n\nRules:\n- Produce 1 to 10 concrete, ordered steps that lead from the current situation to the goal.\n- Address the diagnosed failure directly: gather missing prerequisites first, choose a different\n  location/method, or split the failed step into smaller, safer steps.\n- Same expectation format as planning: inventory / near / block_near / entity_near /\n  health_above / freeform, machine-verifiable where possible. Add "expected_delta" for craft\n  and consume steps (signed inventory changes, exact on the cost side).\n- Reuse KNOWN WORLD FACTS and do not repeat a method the critic says failed; prefer a fresh\n  location/material source when the previous one was missing or depleted.\n- depends_on uses 1-based numbers referring to steps IN THIS NEW LIST only.\n- If the goal is genuinely impossible (e.g. requires creative-only items in survival), return\n  {"impossible": true, "reason": "..."}.\n\nRespond with ONLY a JSON object:\n{\n  "summary": "revised strategy",\n  "steps": [ {"title":..., "instruction":..., "expected":{...}, "depends_on":[]} ]\n}`;
 
 /** Extract a JSON object from a model response that may contain fences/prose. */
 export function extractJSON(text) {
@@ -29,6 +29,7 @@ export function extractJSON(text) {
 }
 
 function worldContext(agent) {
+    let lines;
     try {
         const state = getFullState(agent);
         const g = state.gameplay;
@@ -37,16 +38,37 @@ function worldContext(agent) {
             .map(([k, v]) => `${k} x${v}`).join(', ');
         const entities = [...(state.nearby?.entityTypes || [])].slice(0, 12).join(', ');
         const players = [...(state.nearby?.humanPlayers || [])].join(', ');
-        return [
+        lines = [
             `Position: ${g.position.x}, ${g.position.y}, ${g.position.z} (${g.biome || 'unknown biome'}, ${g.dimension})`,
             `Time/weather: ${g.timeLabel}, ${g.weather}. Health ${g.health}/20, hunger ${g.hunger}/20, game mode ${g.gamemode}`,
             `Inventory: ${inv || 'empty'}`,
             `Nearby entities: ${entities || 'none'}`,
             players ? `Nearby players: ${players}` : null,
             `Ground under bot: ${state.surroundings?.below || 'unknown'}`,
-        ].filter(Boolean).join('\n');
+        ].filter(Boolean);
     } catch {
-        return '(world state unavailable)';
+        lines = ['(live world state unavailable)'];
+    }
+    // Persistent facts are independent of the live snapshot — always include
+    // them when available (including right after a restart).
+    try {
+        const facts = knownFacts(agent);
+        if (facts) lines.push('', 'KNOWN WORLD FACTS (persistent memory — reuse these, do not rediscover):', facts);
+    } catch { /* model optional */ }
+    return lines.join('\n');
+}
+
+/** Persistent world-model facts relevant to planning, or null when empty. */
+function knownFacts(agent) {
+    try {
+        const model = agent.world_model;
+        if (!model) return null;
+        const text = model.summaryForPlanner({ maxLines: settings.world_model?.summary_max_lines ?? 40 });
+        if (!text || text.startsWith('Self:') && text.split('\n').length <= 1) return null;
+        // The live "Self:" line duplicates worldContext; drop it.
+        return text.split('\n').filter((l) => !l.startsWith('Self:')).join('\n').trim() || null;
+    } catch {
+        return null;
     }
 }
 

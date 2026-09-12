@@ -19,6 +19,8 @@ import { Planner } from './planner.js';
 import { Critic, decideRecovery, NEXT, OUTCOME } from './critic.js';
 import { captureState } from './observer.js';
 import { Project, ProjectStore, PROJECT, STEP } from './plan.js';
+import { ingestVerifiedStep, syncProject } from '../observation/ingest.js';
+import { describeDelta } from '../observation/transitions.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -147,6 +149,24 @@ export class PlanRunner {
 
     persist() {
         if (this.project) this.store.save(this.project);
+        syncProject(this.agent.world_model, this.project);
+        this.agent.observation_collector?.saveNow?.();
+    }
+
+    /** Record verified step results as world-model facts (never throws into loop). */
+    ingest(step, outcome) {
+        try {
+            ingestVerifiedStep(this.agent.world_model, {
+                step,
+                before: outcome.before,
+                after: outcome.after,
+                critique: outcome.critique,
+            });
+            syncProject(this.agent.world_model, this.project);
+            this.agent.observation_collector?.saveNow?.();
+        } catch (err) {
+            console.warn('[planning] world-model ingest failed:', err.message);
+        }
     }
 
     shouldHalt() {
@@ -183,6 +203,10 @@ export class PlanRunner {
                 this.executions += 1;
                 if (this.shouldHalt()) break;
 
+                // Verified results become durable world facts; the model never
+                // rediscovers what a previous step already established.
+                this.ingest(step, outcome);
+
                 if (outcome.critique.outcome === OUTCOME.SUCCESS || outcome.critique.outcome === OUTCOME.PARTIAL) {
                     this.project.markDone(step, outcome.critique.reasoning);
                     this.persist();
@@ -208,9 +232,13 @@ export class PlanRunner {
                     await sleep(cfg.step_cooldown_ms);
                     continue;
                 }
-                if (next === NEXT.REPLAN && await this.doReplan(step, outcome.critique)) {
-                    await sleep(cfg.step_cooldown_ms);
-                    continue;
+                if (next === NEXT.REPLAN) {
+                    const replanned = await this.doReplan(step, outcome.critique);
+                    if (replanned === true) {
+                        await sleep(cfg.step_cooldown_ms);
+                        continue;
+                    }
+                    if (replanned === 'aborted') break; // planner declared the goal impossible
                 }
                 if (next === NEXT.ABORT) {
                     this.abort(step, outcome.critique);
@@ -241,6 +269,7 @@ export class PlanRunner {
         const before = captureState(this.agent);
         const progress = this.project.progress();
         const expectedText = describeExpected(step.expected);
+        const deltaText = describeDelta(step.expectedDelta);
         const retryHint = step.attempts > 1 && step.criticNote ?
             `\nYour previous attempt did NOT verify: ${step.criticNote}. Change your approach.` : '';
 
@@ -251,6 +280,7 @@ export class PlanRunner {
             `CURRENT STEP: ${step.title}`,
             `Instruction: ${step.instruction}`,
             `This step is verified complete when: ${expectedText}`,
+            deltaText ? `Additionally, this exact state change must occur: ${deltaText}.` : null,
             retryHint,
             '',
             'Work on ONLY this step now, using whichever commands or tools you need. As soon as the step is',
@@ -286,7 +316,7 @@ export class PlanRunner {
         }
         if (result.impossible) {
             this.abort(failedStep, { reasoning: `planner declared goal impossible: ${result.reason}` });
-            return false;
+            return 'aborted';
         }
         this.project.replaceRemaining(result.steps, critique.failureClass);
         if (result.summary) this.project.summary = result.summary;
@@ -323,11 +353,14 @@ export class PlanRunner {
     }
 
     finish() {
-        const msg = `Project complete: ${this.project.goal}. All ${this.project.progress().total} steps verified.`;
+        const goal = this.project.goal;
+        const msg = `Project complete: ${goal}. All ${this.project.progress().total} steps verified.`;
         this.agent.openChat(msg);
         this.agent.history.add('system', msg);
         void this.agent.history.save();
         this.store.clear();
+        this.agent.world_model?.clearProject(goal);
+        this.agent.observation_collector?.saveNow?.();
         this.project = null;
     }
 

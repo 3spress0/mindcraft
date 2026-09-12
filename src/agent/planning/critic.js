@@ -11,6 +11,7 @@
  */
 
 import { checkExpectation, stateDiff } from './observer.js';
+import { checkTransition } from '../observation/transitions.js';
 
 export const OUTCOME = {
     SUCCESS: 'success',
@@ -62,8 +63,8 @@ export const FAILURE = {
  * critic may override with its own `failure_class`; this keeps classification
  * working even when the model isn't available.
  */
-export function classifyFailure({ stepText = '', diff = {}, resultText = '', died = false } = {}) {
-    const haystack = `${stepText}\n${resultText}\n${diff?.text || ''}`.toLowerCase();
+export function classifyFailure({ stepText = '', diff = {}, resultText = '', evidence = '', died = false } = {}) {
+    const haystack = `${stepText}\n${resultText}\n${diff?.text || ''}\n${evidence}`.toLowerCase();
 
     if (died || diff.healthDelta <= -6) return FAILURE.DANGER;
     if (/\b(no permission|not allowed|operator|whitelist|need op|cannot craft|missing ingredient|out of materials|don't have|do not have)\b/.test(haystack)) {
@@ -77,6 +78,11 @@ export function classifyFailure({ stepText = '', diff = {}, resultText = '', die
     }
     if (/\b(impossible|unsupported|cannot be done|doesn't exist|does not exist|invalid)\b/.test(haystack)) {
         return FAILURE.IMPOSSIBLE;
+    }
+    // A declared state transition that did not happen (LLM claimed success).
+    if (/mismatch/.test(haystack) &&
+        /\b(gather|collect|mine|craft|smelt|make|get|obtain|farm|place|build|cook)\b/.test(haystack)) {
+        return FAILURE.NOT_OBTAINED;
     }
     // Gather-style step with no inventory gain and no movement is a failed method.
     if (/\b(gather|collect|mine|craft|get|obtain|farm|smelt)\b/.test(haystack) &&
@@ -135,13 +141,31 @@ export class Critic {
         const died = after ? Boolean(this.agent.bot?.health <= 0) : false;
 
         const check = checkExpectation(this.agent, step.expected, before, after);
+        const transition = step.expectedDelta ?
+            checkTransition(step.expectedDelta, before, after) :
+            { decidable: false, satisfied: false, results: [], evidence: null };
         let outcome;
         let reasoning;
         let failureClass = FAILURE.NONE;
 
-        if (check.decidable) {
+        // A declared state transition that did not happen is an automatic,
+        // deterministic failure — no matter what the LLM reported.
+        const transitionFailed = transition.decidable && !transition.satisfied;
+        const deterministicFailed = (check.decidable && !check.satisfied) || transitionFailed;
+
+        if (transitionFailed) {
+            outcome = OUTCOME.FAILED;
+            const also = check.decidable && !check.satisfied ? ` Also, ${check.evidence}` : '';
+            reasoning = `expected state transition not observed: ${transition.evidence}${also}`;
+        } else if (check.decidable) {
             outcome = check.satisfied ? OUTCOME.SUCCESS : OUTCOME.FAILED;
-            reasoning = check.evidence;
+            reasoning = [check.evidence, transition.decidable ? transition.evidence : null]
+                .filter(Boolean).join('; ');
+        } else if (transition.decidable && transition.satisfied) {
+            // Freeform outcome goal but the declared transition verified: trust
+            // the deterministic contract and skip the model round-trip.
+            outcome = OUTCOME.SUCCESS;
+            reasoning = `verified state transition: ${transition.evidence}`;
         } else {
             // freeform: model judge (overridable), with heuristic fallback
             const judge = options.freeformJudge || ((ctx) => this.modelJudge(ctx));
@@ -178,6 +202,7 @@ export class Critic {
                 stepText: `${step.title}\n${step.instruction}\n${step.expected?.description || ''}`,
                 diff,
                 resultText,
+                evidence: transition.evidence || '',
                 died,
             });
         }
@@ -186,7 +211,13 @@ export class Critic {
             outcome,
             reasoning,
             failureClass,
-            evidence: check.decidable ? check.evidence : null,
+            evidence: [check.decidable ? check.evidence : null, transition.decidable ? transition.evidence : null]
+                .filter(Boolean).join('; ') || null,
+            transition: transition.decidable ? {
+                satisfied: transition.satisfied,
+                results: transition.results,
+                evidence: transition.evidence,
+            } : null,
             diffText: diff.text,
             at: Date.now(),
         };

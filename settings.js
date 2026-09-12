@@ -70,6 +70,28 @@ const settings = {
         "autoresume": true,       // resume an unfinished project after restart
     },
 
+    // Persistent world model (bots/<name>/world_model.json). The observer layer
+    // records timestamped, confidence-rated facts (locations, mobs, resource
+    // deposits, structures, threats, proven recipes) from live Minecraft events
+    // and from verified plan steps. The planner reads them as "KNOWN WORLD
+    // FACTS" so it stops rediscovering villages/resources and routes around
+    // threats and depleted sources. Inspect with !world [category|query].
+    "world_model": {
+        "enabled": true,           // master switch for the event collector
+        "persist": true,           // save facts to disk (survives restarts)
+        "entity_radius": 48,       // only record entities within this many blocks
+        "player_refresh_ms": 2000, // how often position/health/hunger are snapshotted
+        "scan_interval_ms": 5000,  // full entity sweep + confidence decay interval
+        "save_interval_ms": 15000, // throttle for automatic saves
+        "threat_ttl_ms": 120000,   // unseen hostile mobs expire after 2 minutes
+        "entity_ttl_ms": 600000,   // unseen passive mobs/npcs kept for 10 minutes
+        "item_ttl_ms": 30000,      // dropped item facts expire after 30 seconds
+        "confidence_floor": 0.15,  // volatile facts decaying below this are pruned
+        "volatile_half_life_ms": 120000, // confidence halves every 2 minutes unseen
+        "village_radius": 48,      // block grid size for merging villager sightings
+        "summary_max_lines": 40,   // facts injected into planner prompts
+    },
+
     // Humanlike locomotion layered on top of mineflayer-pathfinder (the mineflayer
     // equivalent of Baritone). Removes robotic movement tells: instant head snaps
     // with a perfectly level stare, nonstop sprinting, zero reaction time, and a

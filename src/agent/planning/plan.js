@@ -25,6 +25,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { normalizeDelta, deltaToJSON } from '../observation/transitions.js';
 
 export const STEP = {
     PENDING: 'pending',
@@ -55,6 +56,7 @@ export class PlanStep {
         this.title = String(data.title || 'Untitled step');
         this.instruction = String(data.instruction || data.title || '');
         this.expected = normalizeExpected(data.expected);
+        this.expectedDelta = normalizeStepDelta(data.expectedDelta ?? data.expected_delta);
         this.dependsOn = Array.isArray(data.dependsOn) ? [...data.dependsOn] :
             (Array.isArray(data.depends_on) ? [...data.depends_on] : []);
         this.status = data.status || STEP.PENDING;
@@ -75,6 +77,7 @@ export class PlanStep {
             title: this.title,
             instruction: this.instruction,
             expected: this.expected,
+            expected_delta: this.expectedDelta ? deltaToJSON(this.expectedDelta) : null,
             dependsOn: this.dependsOn,
             status: this.status,
             attempts: this.attempts,
@@ -84,6 +87,18 @@ export class PlanStep {
             finishedAt: this.finishedAt,
         };
     }
+}
+
+/** Accept normalized entry arrays, model JSON maps, or nothing. */
+export function normalizeStepDelta(raw) {
+    if (!raw) return null;
+    const { entries, problems } = normalizeDelta(raw);
+    if (problems.length) {
+        for (const p of problems) {
+            if (!p.includes('not verifiable')) console.warn(`[planning] ${p}`);
+        }
+    }
+    return entries.length ? entries : null;
 }
 
 export function normalizeExpected(expected) {
@@ -273,7 +288,12 @@ export function stepsFromJSON(rawSteps, { repairDeps = true } = {}) {
         if (!instruction) problems.push(`step ${i + 1} has no instruction`);
         const rawDeps = Array.isArray(raw.depends_on) ? raw.depends_on :
             (Array.isArray(raw.dependsOn) ? raw.dependsOn : []);
-        return { title, instruction, expected: normalizeExpected(raw.expected), rawDeps: rawDeps.map(String) };
+        const { entries: deltaEntries, problems: deltaProblems } = normalizeDelta(raw.expected_delta);
+        for (const p of deltaProblems) if (!p.includes('not verifiable')) problems.push(p);
+        return {
+            title, instruction, expected: normalizeExpected(raw.expected),
+            deltaEntries, rawDeps: rawDeps.map(String),
+        };
     });
 
     // Model-facing dependencies are 1-based ordinals ("step 3"); map them to
@@ -283,6 +303,7 @@ export function stepsFromJSON(rawSteps, { repairDeps = true } = {}) {
         title: p.title,
         instruction: p.instruction,
         expected: p.expected,
+        expectedDelta: p.deltaEntries,
     }));
     const idByOrdinal = new Map(steps.map((s, i) => [String(i + 1), s.id]));
     for (let i = 0; i < steps.length; i++) {
