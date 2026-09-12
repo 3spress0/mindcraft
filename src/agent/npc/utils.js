@@ -79,6 +79,11 @@ export function blockSatisfied(target_name, block) {
         return block.name.endsWith('bed');
     } else if (target_name == 'torch') {
         return block.name.includes('torch');
+    } else if (target_name.endsWith('_sign')) {
+        // Standing and wall signs are the same inventory item.
+        const wood = target_name.split('_sign')[0];
+        return block.name === `${wood}_sign` || block.name === `${wood}_wall_sign` ||
+            block.name === `${wood}_hanging_sign` || block.name === `${wood}_wall_hanging_sign`;
     }
     return block.name == target_name;
 }

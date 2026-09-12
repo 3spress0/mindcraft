@@ -3,6 +3,7 @@ import { NPCData } from './data.js';
 import { ItemGoal } from './item_goal.js';
 import { BuildGoal } from './build_goal.js';
 import { itemSatisfied, rotateXZ } from './utils.js';
+import { libraryDirs, ensureUserLibrary, padBlueprint } from '../schematics/library.js';
 import * as skills from '../library/skills.js';
 import * as world from '../library/world.js';
 import * as mc from '../../utils/mcdata.js';
@@ -40,9 +41,13 @@ export class NPCContoller {
 
     init() {
         try {
-            for (let file of readdirSync('src/agent/npc/construction')) {
-                if (file.endsWith('.json')) {
-                    this.constructions[file.slice(0, -5)] = JSON.parse(readFileSync('src/agent/npc/construction/' + file, 'utf8'));
+            ensureUserLibrary();
+            // Built-in blueprints first, so user library files override same names.
+            for (const dir of libraryDirs()) {
+                for (let file of readdirSync(dir)) {
+                    if (file.endsWith('.json')) {
+                        this.constructions[file.slice(0, -5)] = JSON.parse(readFileSync(dir + '/' + file, 'utf8'));
+                    }
                 }
             }
         } catch (e) {
@@ -50,19 +55,7 @@ export class NPCContoller {
         }
 
         for (let name in this.constructions) {
-            let sizez = this.constructions[name].blocks[0].length;
-            let sizex = this.constructions[name].blocks[0][0].length;
-            let max_size = Math.max(sizex, sizez);
-            for (let y = 0; y < this.constructions[name].blocks.length; y++) {
-                for (let z = 0; z < max_size; z++) {
-                    if (z >= this.constructions[name].blocks[y].length)
-                        this.constructions[name].blocks[y].push([]);
-                    for (let x = 0; x < max_size; x++) {
-                        if (x >= this.constructions[name].blocks[y][z].length)
-                            this.constructions[name].blocks[y][z].push('');
-                    }
-                }
-            }
+            padBlueprint(this.constructions[name]);
         }
 
         this.agent.bot.on('idle', async () => {

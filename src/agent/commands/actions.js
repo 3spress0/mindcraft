@@ -1,6 +1,8 @@
 import * as skills from '../library/skills.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
+import { buildSchematic } from '../npc/schematic_build.js';
+import { Vec3 } from 'vec3';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -305,6 +307,27 @@ export const actionsList = [
         perform: runAsAction(async (agent, type) => {
             let pos = agent.bot.entity.position;
             await skills.placeBlock(agent.bot, type, pos.x, pos.y, pos.z);
+        })
+    },
+    {
+        name: '!buildSchematic',
+        description: 'Build a structure from the schematic library (.litematic, .schem, .nbt or .json) block by block. If materials are missing, the build pauses and resumes when the command is run again after gathering.',
+        params: {
+            'name': { type: 'string', description: 'Library build name (filename with or without extension). Use !listBuilds to browse.' },
+            'x': { type: 'float', description: 'Optional world X of the build corner. Omit to auto-place on nearby flat ground.' },
+            'y': { type: 'float', description: 'Optional world Y (ground level) of the build corner.' },
+            'z': { type: 'float', description: 'Optional world Z of the build corner.' },
+            'rotation': { type: 'int', description: 'Optional rotation 0-3 (90 degree steps). Omit for a random one.' },
+        },
+        perform: runAsAction(async (agent, name, x, y, z, rotation) => {
+            let position = null;
+            if (x !== undefined && y !== undefined && z !== undefined) {
+                position = new Vec3(x, y, z);
+            }
+            const orient = rotation === undefined || rotation === null ? null : rotation;
+            const result = await buildSchematic(agent, name, position, orient);
+            if (result.status === 'error') throw new Error(result.message);
+            return result.message;
         })
     },
     {

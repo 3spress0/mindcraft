@@ -3,6 +3,7 @@ import * as mc from '../../utils/mcdata.js';
 import { getCommandDocs } from './index.js';
 import convoManager from '../conversation.js';
 import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks.js';
+import { library, formatMaterialCounts } from '../schematics/library.js';
 import { load } from 'cheerio';
 
 const pad = (str) => {
@@ -342,6 +343,48 @@ export const queryList = [
         description: 'Lists all available commands and their descriptions.',
         perform: async function (agent) {
             return getCommandDocs(agent);
+        }
+    },
+    {
+        name: '!listBuilds',
+        description: 'List every build in the schematic library (Litematica .litematic, Sponge .schem, vanilla structure .nbt and blueprint .json files) with dimensions, block count and main materials.',
+        perform: async function () {
+            const names = library.scan();
+            if (names.length === 0) {
+                return pad('The build library is empty. Drop schematic files into the configured schematic_library folder (default ./schematics), then try again.');
+            }
+            const lines = [`Build library (${names.length}):`];
+            for (const name of names) {
+                const info = await library.describe(name);
+                if (!info) continue;
+                const mats = formatMaterialCounts(info.materials, 6);
+                lines.push(`- ${info.name} [${info.format}, ${info.width}x${info.height}x${info.length}, ${info.total} blocks]: ${mats}`);
+            }
+            return pad(lines.join('\n'));
+        }
+    },
+    {
+        name: '!buildMaterials',
+        description: 'Get the full material list and dimensions of a library build before gathering blocks.',
+        params: {
+            'name': { type: 'string', description: 'Library build name (filename with or without extension).' },
+        },
+        perform: async function (agent, name) {
+            const info = await library.describe(name);
+            if (!info) {
+                const names = library.scan();
+                return pad(`No build named "${name}". Available: ${names.join(', ')}`);
+            }
+            const lines = [`${info.name} [${info.format}] ${info.width}x${info.height}x${info.length}, ${info.total} blocks total`];
+            if (info.author) lines.push(`Author: ${info.author}`);
+            if (info.description) lines.push(info.description);
+            lines.push('Materials:');
+            const mats = Object.entries(info.materials).sort((a, b) => b[1] - a[1]);
+            for (const [block, n] of mats) lines.push(`- ${block} x${n}`);
+            if (Object.keys(info.skipped).length > 0) {
+                lines.push('Cannot be placed (no block item, skipped at build): ' + formatMaterialCounts(info.skipped, 50));
+            }
+            return pad(lines.join('\n'));
         }
     },
 ];

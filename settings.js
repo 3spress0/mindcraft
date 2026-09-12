@@ -48,6 +48,12 @@ const settings = {
     "spawn_timeout": 30, // num seconds allowed for the bot to spawn before throwing error. Increase when spawning takes a while.
     "block_place_delay": 0, // delay between placing blocks (ms) if using newAction. helps avoid bot being kicked by anti-cheat mechanisms on servers.
 
+    // Folder (relative to project root) where the bot looks for build files:
+    // Litematica .litematic, Sponge/WorldEdit .schem (Baritone's format too),
+    // vanilla structure .nbt, and mindcraft blueprint .json. Browse with
+    // !listBuilds, quote materials with !buildMaterials, build with !buildSchematic.
+    "schematic_library": "schematics",
+
     // Humanlike locomotion layered on top of mineflayer-pathfinder (the mineflayer
     // equivalent of Baritone). Removes robotic movement tells: instant head snaps
     // with a perfectly level stare, nonstop sprinting, zero reaction time, and a
