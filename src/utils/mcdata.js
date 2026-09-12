@@ -7,6 +7,7 @@ import { plugin as pvp } from 'mineflayer-pvp';
 import { plugin as collectblock } from 'mineflayer-collectblock';
 import { plugin as autoEat } from 'mineflayer-auto-eat';
 import plugin from 'mineflayer-armor-manager';
+import { humanizer } from './humanizer.js';
 const armorManager = plugin;
 let mc_version = settings.minecraft_version;
 let mcdata = null;
@@ -119,6 +120,9 @@ export function initBot(username) {
     bot.loadPlugin(collectblock);
     bot.loadPlugin(autoEat);
     bot.loadPlugin(armorManager); // auto equip armor
+    // Must load after pathfinder: its physicsTick listener then runs after
+    // pathfinder's, so it can humanize the final movement/look decisions.
+    bot.loadPlugin(humanizer); // humanlike gaze, pacing, hesitations and idle glances
     bot.once('resourcePack', () => {
         bot.acceptResourcePack();
     });

@@ -48,6 +48,31 @@ const settings = {
     "spawn_timeout": 30, // num seconds allowed for the bot to spawn before throwing error. Increase when spawning takes a while.
     "block_place_delay": 0, // delay between placing blocks (ms) if using newAction. helps avoid bot being kicked by anti-cheat mechanisms on servers.
 
+    // Humanlike locomotion layered on top of mineflayer-pathfinder (the mineflayer
+    // equivalent of Baritone). Removes robotic movement tells: instant head snaps
+    // with a perfectly level stare, nonstop sprinting, zero reaction time, and a
+    // frozen stance while idle. Digging, building, combat and scripted lookAt calls
+    // are never affected.
+    "humanlike": {
+        "enabled": true,          // master switch; can also be toggled at runtime via bot.humanizer.setEnabled()
+        "smooth_gaze": true,      // ease/rate-limit head turns, add micro-jitter and natural vertical gaze wander
+        "max_turn_rate_deg": 17,  // max yaw change per game tick (20 ticks/s) while traveling
+        "gaze_turn_gain": 0.42,   // how quickly the head eases toward the travel heading (0..1)
+        "gaze_jitter_deg": 0.7,   // random gaze noise per tick, in degrees
+        "gaze_pitch_var": 0.13,   // radians of vertical gaze wander while walking
+        "varied_pace": true,      // mix walking and sprinting instead of sprinting everywhere
+        "sprint_ratio": 0.72,     // approx share of travel time spent sprinting (0..1)
+        "reaction_delay_ms": 220, // max startup reaction delay, jittered between 0 and this
+        "hesitations": true,      // brief 50-150ms "thinking" pauses mid-route (flat ground only)
+        "hesitation_min_s": 6,    // min seconds between hesitation pauses
+        "hesitation_max_s": 20,   // max seconds between hesitation pauses
+        "idle_glances": true,     // occasionally look around while standing still
+        "idle_min_s": 3,          // min seconds between idle glances
+        "idle_max_s": 10,         // max seconds between idle glances
+        "idle_arm_swing": false,  // occasionally swing the arm while idle (off by default)
+        "external_look_hold_ms": 2500, // don't idle-glance for this long after a scripted look/lookAt
+    },
+
 
     "log_all_prompts": false, // log ALL prompts to file
     "show_chat_history": true, // stream and persist Runtime chat/tool events for the web UI
