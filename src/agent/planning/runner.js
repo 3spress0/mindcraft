@@ -16,7 +16,9 @@
 
 import settings from '../settings.js';
 import { Planner } from './planner.js';
-import { Critic, decideRecovery, NEXT, OUTCOME } from './critic.js';
+import { Critic, OUTCOME } from './critic.js';
+import { decideRecoveryContext } from './recovery.js';
+import { RECOVERY_ACTION, RETRY_FAMILY } from './policies.js';
 import { captureState } from './observer.js';
 import { Project, ProjectStore, PROJECT, STEP } from './plan.js';
 import { ingestVerifiedStep, syncProject } from '../observation/ingest.js';
@@ -46,6 +48,10 @@ export class PlanRunner {
             step_cooldown_ms: 1500,
             autoresume: true,
             freeform_critic: true,
+            recovery_profile: 'default', // default | explorer | builder | survival
+            recovery_policies: null,     // optional per-profile action overrides
+            danger_health_threshold: 6,  // <= this health with threats nearby = critical
+            threat_radius: 16,           // world-model threats counted as nearby danger
             ...(settings.planning || {}),
         };
     }
@@ -81,10 +87,10 @@ export class PlanRunner {
         this.replanCount = project.iteration - 1;
         this.persist();
 
-        const planText = project.steps.map((s, i) => `${i + 1}. ${s.title}`).join('\n');
-        this.agent.openChat(`Plan ready (${project.steps.length} steps):\n${planText}`);
+        const planText = renderPlanOutline(project);
+        this.agent.openChat(`Plan ready (${project.progress().total} actionable steps across ${project.phases.length} phase${project.phases.length > 1 ? 'es' : ''}):\n${planText}`);
         if (warnings.length) this.agent.history.add('system', `Plan created with warnings: ${warnings.join('; ')}`);
-        this.agent.history.add('system', `Started planned project "${goal}" with ${project.steps.length} steps.`);
+        this.agent.history.add('system', `Started planned project "${goal}": ${project.progress().total} actionable steps across ${project.phases.length} phase(s).`);
         await this.agent.history.save();
 
         this._launchLoop();
@@ -216,36 +222,50 @@ export class PlanRunner {
                     continue;
                 }
 
-                const next = decideRecovery({
+                // World-model-aware, policy-driven recovery with explicit reason + evidence.
+                const decision = decideRecoveryContext({
                     outcome: outcome.critique.outcome,
                     failureClass: outcome.critique.failureClass,
                     attempts: step.attempts,
                     maxAttempts: cfg.max_step_attempts,
                     replanCount: this.replanCount,
                     maxReplans: cfg.max_replans,
+                    step,
+                    before: outcome.before,
+                    after: outcome.after,
+                    critique: outcome.critique,
+                    worldModel: this.agent.world_model || null,
+                    profile: cfg.recovery_profile,
+                    policyOverrides: cfg.recovery_policies,
+                    dangerHealthThreshold: cfg.danger_health_threshold,
+                    threatRadius: cfg.threat_radius,
                 });
-                this.project.markFailed(step, `${outcome.critique.failureClass}: ${outcome.critique.reasoning}`, outcome.critique.diffText);
+                step.lastRecovery = decision;
+                this.project.markFailed(step,
+                    `${decision.reason}: ${outcome.critique.reasoning || outcome.critique.failureClass}`,
+                    outcome.critique.diffText);
+                this.persist();
 
-                if (next === NEXT.RETRY) {
-                    this.persist();
-                    this.agent.openChat(`Step "${step.title}" didn't verify (${outcome.critique.reasoning}). Retrying...`);
+                if (RETRY_FAMILY.has(decision.action)) {
+                    const evidence = decision.evidence.length ? ` \u2014 ${decision.evidence.join('; ')}` : '';
+                    this.agent.openChat(`Recovery [${cfg.recovery_profile}:${decision.action}] ${step.title}: ${decision.reason}${evidence}`);
                     await sleep(cfg.step_cooldown_ms);
                     continue;
                 }
-                if (next === NEXT.REPLAN) {
-                    const replanned = await this.doReplan(step, outcome.critique);
+                if (decision.action === RECOVERY_ACTION.REPLAN) {
+                    const replanned = await this.doReplan(step, { ...outcome.critique, recovery: decision });
                     if (replanned === true) {
                         await sleep(cfg.step_cooldown_ms);
                         continue;
                     }
-                    if (replanned === 'aborted') break; // planner declared the goal impossible
+                    if (replanned === 'aborted') break; // planner declared goal impossible
                 }
-                if (next === NEXT.ABORT) {
-                    this.abort(step, outcome.critique);
+                if (decision.action === RECOVERY_ACTION.ABORT) {
+                    this.abort(step, { reasoning: `${decision.reason}: ${decision.evidence.join('; ')}` });
                     break;
                 }
-                // HUMAN or replan exhaustion
-                this.block(step, outcome.critique.reasoning || outcome.critique.failureClass);
+                // HUMAN: pause with the explicit reason and evidence.
+                this.block(step, `${decision.reason}: ${decision.evidence.join('; ') || outcome.critique.reasoning}`);
                 break;
             }
 
@@ -270,8 +290,10 @@ export class PlanRunner {
         const progress = this.project.progress();
         const expectedText = describeExpected(step.expected);
         const deltaText = describeDelta(step.expectedDelta);
-        const retryHint = step.attempts > 1 && step.criticNote ?
-            `\nYour previous attempt did NOT verify: ${step.criticNote}. Change your approach.` : '';
+        const recoveryHint = step.lastRecovery?.guidance ?
+            `\nRECOVERY FROM PREVIOUS FAILURE (${step.lastRecovery.reason}):\n${step.lastRecovery.guidance}` :
+            (step.attempts > 1 && step.criticNote ?
+                `\nYour previous attempt did NOT verify: ${step.criticNote}. Change your approach.` : '');
 
         const message = [
             `You are executing step ${progress.done + 1} of ${progress.total} of a planned project.`,
@@ -281,7 +303,7 @@ export class PlanRunner {
             `Instruction: ${step.instruction}`,
             `This step is verified complete when: ${expectedText}`,
             deltaText ? `Additionally, this exact state change must occur: ${deltaText}.` : null,
-            retryHint,
+            recoveryHint,
             '',
             'Work on ONLY this step now, using whichever commands or tools you need. As soon as the step is',
             'verifiably done (or you are blocked and cannot proceed), stop and report.',
@@ -318,18 +340,24 @@ export class PlanRunner {
             this.abort(failedStep, { reasoning: `planner declared goal impossible: ${result.reason}` });
             return 'aborted';
         }
-        this.project.replaceRemaining(result.steps, critique.failureClass);
+        this.project.replaceRemaining(result.steps, critique.failureClass, result.phases || null);
         if (result.summary) this.project.summary = result.summary;
         this.replanCount += 1;
         this.persist();
         this.agent.openChat(`Revised plan (${result.steps.length} remaining steps):\n` +
-            result.steps.map((s, i) => `${i + 1}. ${s.title}`).join('\n'));
+            result.steps.map((s) => {
+                const ph = this.project.phases.length > 1 ? `[${this.project.phaseById(s.phaseId).title}] ` : '';
+                return `${ph}${s.title}`;
+            }).join('\n'));
         return true;
     }
 
     announceStep(step) {
         const p = this.project.progress();
-        this.agent.openChat(`[Plan ${p.pct}%] ${step.title}`);
+        const phase = this.project.phaseById(step.phaseId);
+        const multi = this.project.phases.length > 1;
+        const ph = multi ? ` · ${phase.title}` : '';
+        this.agent.openChat(`[Plan ${p.pct}%${ph}] ${step.title}`);
     }
 
     block(step, reason) {
@@ -395,6 +423,24 @@ export class PlanRunner {
             this._launchLoop();
         }
     }
+}
+
+/** Phase-grouped outline used for the "Plan ready" announcement. */
+function renderPlanOutline(project) {
+    if (project.phases.length <= 1) {
+        return project.steps.map((s, i) => `${i + 1}. ${s.title}`).join('\n');
+    }
+    const lines = [];
+    for (const phase of [...project.phases].sort((a, b) => a.order - b.order)) {
+        const steps = project.steps.filter((s) => s.phaseId === phase.id);
+        if (!steps.length) continue;
+        lines.push(`${phase.title}:`);
+        for (const s of steps) {
+            const depth = s.parentId ? 2 : 1;
+            lines.push(`${'  '.repeat(depth)}- ${s.title}`);
+        }
+    }
+    return lines.join('\n');
 }
 
 export function describeExpected(expected) {

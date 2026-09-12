@@ -68,6 +68,15 @@ const settings = {
         "step_cooldown_ms": 1500, // pause between steps
         "freeform_critic": true,  // use the model to judge non-deterministic expectations
         "autoresume": true,       // resume an unfinished project after restart
+        // Recovery policy profile: default, explorer (search aggressively),
+        // builder (route to known deposits, escalate material issues), or
+        // survival (safety-first retreats). Profiles live in
+        // src/agent/planning/policies.js and consume WorldModel facts
+        // (depleted deposits, alternative sources, nearby threats, retreats).
+        "recovery_profile": "default",
+        "recovery_policies": null, // optional {profile: {failureClass: action}} overrides
+        "danger_health_threshold": 6, // health <= this with threats nearby -> retreat/human
+        "threat_radius": 16,       // world-model threats within this range count as danger
     },
 
     // Persistent world model (bots/<name>/world_model.json). The observer layer

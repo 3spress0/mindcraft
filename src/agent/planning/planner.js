@@ -12,9 +12,9 @@ import settings from '../settings.js';
 import { getFullState } from '../library/full_state.js';
 import { projectFromGoal, PlanValidationError, stepsFromJSON, Project, PROJECT } from './plan.js';
 
-const PLAN_SYSTEM = `You are a Minecraft planning agent. You break a high-level goal into a short, concrete,\nordered plan that a separate executor agent (which can use all in-game commands and tools)\nwill carry out step by step.\n\nRules:\n- Produce 3 to 12 steps. Each step must be ONE self-contained, actionable instruction.\n- Order steps so prerequisites come first. Use depends_on with 1-based step numbers only\n  when a step genuinely requires another (most steps are simply sequential).\n- Every step needs a machine-verifiable "expected" outcome. Use these kinds:\n    {"kind":"inventory","item":"oak_log","gained":1}      // inventory must gain/contain items\n    {"kind":"near","x":120,"y":64,"z":-40,"radius":6}     // bot reaches coordinates\n    {"kind":"block_near","block":"crafting_table","radius":8,"atLeast":1}\n    {"kind":"entity_near","entity":"villager","radius":24,"atLeast":1}\n    {"kind":"health_above","level":10}\n    {"kind":"freeform","description":"<what a Minecraft expert would see if done>"}\n- Prefer concrete, checkable expectations over vague ones. Use freeform only when the result\n  is not an inventory/position/block/entity/health fact.\n- For craft/smelt/brew steps ALSO add "expected_delta": exact signed inventory changes, e.g.\n  {"expected_delta":{"inventory.hopper":1,"inventory.iron_ingot":-5}}. Positive numbers mean\n  gains at least N; negative numbers mean exactly |N| consumed (recipes are exact).\n- For steps that place/build blocks use block_near; for gathering use the inventory expectation\n  with "gained". Reuse KNOWN WORLD FACTS instead of rediscovering locations or revisiting\n  depleted sources, and route around listed threats.\n- Steps must be achievable with in-game actions only (move, mine, craft, build, fight, farm,\n  trade, use chests). Never require commands the bot does not have.\n- Consider resources, tools, danger (light, weapons, food) and verification of each stage.\n\nRespond with ONLY a JSON object, no markdown fences, in exactly this shape:\n{\n  "summary": "one-sentence strategy",\n  "constraints": ["e.g. do not destroy player builds"],\n  "completion_criteria": "how a human would know the whole goal is done",\n  "steps": [\n    {"title":"short label","instruction":"detailed instruction for the executor","expected":{...},"expected_delta":{"inventory.item":1},"depends_on":["1"]}\n  ]\n}`;
+const PLAN_SYSTEM = `You are a Minecraft planning agent. You break a high-level goal into a HIERARCHICAL plan that a\nseparate executor agent (which can use all in-game commands and tools) carries out phase by phase.\n\nStructure:\n- Emit 2 to 6 "phases" (major stages, in order, e.g. Preparation, Construction, Verification).\n- Produce 3 to 20 concrete steps and tag each step with its phase as a 1-based number ("phase": 2).\n- For a step that is itself a group of smaller tasks, emit the group step first (no expectation),\n  then its sub-task steps with "parent" set to the group step's 1-based number. Only leaf steps\n  need expectations; the group rolls up automatically.\n- Each leaf step must be ONE self-contained, actionable instruction. Simple goals may use a single\n  phase.\n- Order steps so prerequisites come first. Use depends_on with 1-based step numbers only\n  when a step genuinely requires another (most steps are simply sequential).\n- Every step needs a machine-verifiable "expected" outcome. Use these kinds:\n    {"kind":"inventory","item":"oak_log","gained":1}      // inventory must gain/contain items\n    {"kind":"near","x":120,"y":64,"z":-40,"radius":6}     // bot reaches coordinates\n    {"kind":"block_near","block":"crafting_table","radius":8,"atLeast":1}\n    {"kind":"entity_near","entity":"villager","radius":24,"atLeast":1}\n    {"kind":"health_above","level":10}\n    {"kind":"freeform","description":"<what a Minecraft expert would see if done>"}\n- Prefer concrete, checkable expectations over vague ones. Use freeform only when the result\n  is not an inventory/position/block/entity/health fact.\n- For craft/smelt/brew steps ALSO add "expected_delta": exact signed inventory changes, e.g.\n  {"expected_delta":{"inventory.hopper":1,"inventory.iron_ingot":-5}}. Positive numbers mean\n  gains at least N; negative numbers mean exactly |N| consumed (recipes are exact).\n- For steps that place/build blocks use block_near; for gathering use the inventory expectation\n  with "gained". Reuse KNOWN WORLD FACTS instead of rediscovering locations or revisiting\n  depleted sources, and route around listed threats.\n- Steps must be achievable with in-game actions only (move, mine, craft, build, fight, farm,\n  trade, use chests). Never require commands the bot does not have.\n- Consider resources, tools, danger (light, weapons, food) and verification of each stage.\n\nRespond with ONLY a JSON object, no markdown fences, in exactly this shape:\n{\n  "summary": "one-sentence strategy",\n  "constraints": ["e.g. do not destroy player builds"],\n  "completion_criteria": "how a human would know the whole goal is done",\n  "phases": [ {"title":"Preparation"}, {"title":"Construction"}, {"title":"Verification"} ],\n  "steps": [\n    {"title":"short label","instruction":"detailed instruction for the executor","phase":1,"parent":null,"expected":{...},"expected_delta":{"inventory.item":1},"depends_on":["1"]}\n  ]\n}`;
 
-const REPLAN_SYSTEM = `You are a Minecraft planning agent revising a plan after reality diverged from it.\nYou are given the goal, the steps already completed, the failed step, the critic's diagnosis,\nand the latest world observation. Produce the REMAINING plan (do NOT repeat completed steps).\n\nRules:\n- Produce 1 to 10 concrete, ordered steps that lead from the current situation to the goal.\n- Address the diagnosed failure directly: gather missing prerequisites first, choose a different\n  location/method, or split the failed step into smaller, safer steps.\n- Same expectation format as planning: inventory / near / block_near / entity_near /\n  health_above / freeform, machine-verifiable where possible. Add "expected_delta" for craft\n  and consume steps (signed inventory changes, exact on the cost side).\n- Reuse KNOWN WORLD FACTS and do not repeat a method the critic says failed; prefer a fresh\n  location/material source when the previous one was missing or depleted.\n- depends_on uses 1-based numbers referring to steps IN THIS NEW LIST only.\n- If the goal is genuinely impossible (e.g. requires creative-only items in survival), return\n  {"impossible": true, "reason": "..."}.\n\nRespond with ONLY a JSON object:\n{\n  "summary": "revised strategy",\n  "steps": [ {"title":..., "instruction":..., "expected":{...}, "depends_on":[]} ]\n}`;
+const REPLAN_SYSTEM = `You are a Minecraft planning agent revising a plan after reality diverged from it.\nYou are given the goal, the steps already completed, the failed step, the critic's diagnosis,\nand the latest world observation. Produce the REMAINING plan (do NOT repeat completed steps).\n\nRules:\n- Produce 1 to 10 concrete, ordered steps that lead from the current situation to the goal.\n- Address the diagnosed failure directly: gather missing prerequisites first, choose a different\n  location/method, or split the failed step into smaller, safer steps.\n- Same expectation format as planning: inventory / near / block_near / entity_near /\n  health_above / freeform, machine-verifiable where possible. Add "expected_delta" for craft\n  and consume steps (signed inventory changes, exact on the cost side).\n- Reuse KNOWN WORLD FACTS and do not repeat a method the critic says failed; prefer a fresh\n  location/material source when the previous one was missing or depleted.\n- depends_on uses 1-based numbers referring to steps IN THIS NEW LIST only.\n- If the goal is genuinely impossible (e.g. requires creative-only items in survival), return\n  {"impossible": true, "reason": "..."}.\n- New steps may be grouped with a "phases" array (each step then tags "phase" 1-based, relative to\n  the new phases list); parent sub-tasks are allowed the same way as initial planning.\n\nRespond with ONLY a JSON object:\n{\n  "summary": "revised strategy",\n  "phases": [ {"title":"..."} ],\n  "steps": [ {"title":..., "instruction":..., "phase":1, "parent":null, "expected":{...}, "expected_delta":{...}, "depends_on":[]} ]\n}`;
 
 /** Extract a JSON object from a model response that may contain fences/prose. */
 export function extractJSON(text) {
@@ -106,7 +106,15 @@ export class Planner {
                 '',
                 i > 0 ? `Your previous response was invalid (${lastError?.message || lastError}). Return correct JSON only.` : 'Produce the plan JSON now.',
             ].join('\n');
-            const res = await this._model([{ role: 'user', content: user }], PLAN_SYSTEM);
+            let res;
+            try {
+                res = await this._model([{ role: 'user', content: user }], PLAN_SYSTEM);
+            } catch (err) {
+                if (String(err.name || err.message).includes('Abort')) throw err;
+                lastError = err;
+                console.warn('[planning] plan model call failed, retrying:', err.message);
+                continue;
+            }
             try {
                 const json = extractJSON(res);
                 if (!Array.isArray(json.steps) || json.steps.length === 0) {
@@ -153,6 +161,7 @@ export class Planner {
                 '',
                 `FAILED STEP: ${failedStep.title}\nInstruction: ${failedStep.instruction}`,
                 `CRITIC DIAGNOSIS: ${critique.reasoning || critique.failureClass || 'failed'} (class: ${critique.failureClass})`,
+                critique.recovery ? `RECOVERY CONTEXT (${critique.recovery.reason}):\n${(critique.recovery.evidence || []).map((e) => `  - ${e}`).join('\n')}` : null,
                 `OBSERVED CHANGE:\n${critique.diffText || 'no observable change'}`,
                 '',
                 'CURRENT WORLD STATE:',
@@ -160,16 +169,27 @@ export class Planner {
                 '',
                 i > 0 ? `Previous response was invalid (${lastError?.message || lastError}). Return correct JSON only.` : 'Produce the remaining-plan JSON now.',
             ].filter(Boolean).join('\n');
-            const res = await this._model([{ role: 'user', content: user }], REPLAN_SYSTEM);
+            let res;
+            try {
+                res = await this._model([{ role: 'user', content: user }], REPLAN_SYSTEM);
+            } catch (err) {
+                if (String(err.name || err.message).includes('Abort')) throw err;
+                lastError = err;
+                console.warn('[planning] replan model call failed, retrying:', err.message);
+                continue;
+            }
             try {
                 const json = extractJSON(res);
                 if (json.impossible) return { impossible: true, reason: String(json.reason || 'declared impossible') };
-                const { steps, problems } = stepsFromJSON(json.steps);
+                const { steps, phases, problems } = stepsFromJSON(json.steps, Array.isArray(json.phases) ? json.phases : null);
                 if (steps.length === 0 || problems.some((p) => p.includes('cycle'))) {
                     throw new PlanValidationError(problems, json);
                 }
                 if (problems.length) console.warn('[planning] replan warnings:', problems.join('; '));
-                return { steps, summary: String(json.summary || '').slice(0, 300), warnings: problems };
+                return {
+                    steps, phases: Array.isArray(json.phases) ? phases : null,
+                    summary: String(json.summary || '').slice(0, 300), warnings: problems,
+                };
             } catch (err) {
                 lastError = err;
                 console.warn('[planning] replan parse/validation failed, retrying:', err.message);

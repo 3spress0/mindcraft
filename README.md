@@ -147,11 +147,30 @@ For long-horizon goals ("build an automated iron farm"), the bot can run a close
 
 State is saved to `bots/<name>/active_project.json` after every step, so restarts resume mid-project (tunable via the `planning` block in `settings.js`).
 
-- `!plan <goal>` — create a plan and start executing it
-- `!planStatus` — show the plan tree, statuses, progress and critic notes
+- `!plan <goal>` — create a phased plan and start executing it
+- `!planStatus` — show the phase/task tree, per-step statuses, progress, and the last contextual recovery decision with its reason and evidence
 - `!planStop` — pause the project (resumable)
 - `!planResume` — continue a paused/interrupted project
 - `!planReplan` — discard the remaining steps and ask the planner for a new approach
+
+Plans are hierarchical: the planner emits 2–6 **phases** (e.g. Preparation → Construction → Verification), steps are tagged to a phase and execute earliest-phase-first, and a step can itself be a group whose **sub-tasks** are the executable leaves (the group rolls up automatically when its leaves verify). Flat plans remain fully supported.
+
+### Context-aware recovery policies
+
+When a step fails, recovery is no longer a generic retry: the runner combines the failure class, the chosen policy profile, and **WorldModel facts** (depleted deposits, alternative sources, last-seen targets, active threats, known shelters, health) into an explicit decision with a reason code and evidence, e.g.
+
+```
+Recovery [default:navigate] Obtain 32 iron: target_depleted — nearest known iron_ore deposit is depleted; usable iron_ore deposit 180m away at (180, 64, -20)
+```
+
+Actions are `retry`, `repath`, `navigate` (to a known deposit/target with coordinates injected into the next executor turn), `search`, `gather`, `retreat` (to a known base or away from the nearest threat), `replan`, `human` (pause for help), or `abort` — all bounded by the per-step attempt and replan budgets, and all shown by `!planStatus`. Profiles (config `planning.recovery_profile`):
+
+- `default` — repath obstructions, gather missing materials once, retreat from danger, replan wrong approaches
+- `explorer` — search aggressively for unknown targets, simple retries on glitches
+- `builder` — prefer routing to known deposits/stations, escalate material problems sooner
+- `survival` — safety-first retreats and earlier replanning
+
+Profiles can be overridden per failure class via `planning.recovery_policies` in `settings.js`; the built-in table lives in `src/agent/planning/policies.js` and the world-aware decision logic in `src/agent/planning/recovery.js`.
 
 ### Persistent world model and verified state transitions
 

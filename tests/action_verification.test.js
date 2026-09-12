@@ -434,7 +434,8 @@ test('runner: executor claims craft success but no state delta -> retry -> repla
         await runner.waitForCompletion();
         assert.equal(attempts, 2, 'retried once after unverified claim');
         assert.equal(project.status, PROJECT.FAILED);
-        assert.ok(agent.chats.some((c) => c.includes('state transition') || c.includes("didn't verify")));
+        assert.ok(agent.chats.some((c) => c.startsWith('Recovery [')), 'a contextual recovery announcement is made');
+        assert.ok(agent.chats.some((c) => /aborted/i.test(c)), 'impossible replan aborts the project');
         assert.ok(!agent.world_model.hasRecipe('hopper'), 'no recipe learned from a fake success');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
