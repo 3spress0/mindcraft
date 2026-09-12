@@ -135,6 +135,26 @@ The `initial_inventory` is what the bot will have at the start of the episode, `
 
 If you want more optimization and automatic launching of the minecraft world, you will need to follow the instructions in [Minecollab Instructions](minecollab.md#installation)
 
+## Planned projects (planner → executor → critic)
+
+For long-horizon goals ("build an automated iron farm"), the bot can run a closed planning loop instead of a single endless self-prompt:
+
+1. The **planner** turns the goal into an ordered, dependency-aware plan of concrete steps, each with a machine-verifiable expected outcome (inventory gain, coordinates reached, block/entity nearby, health level, or a freeform check).
+2. The **executor** carries out one step at a time using the normal command/native-tool machinery.
+3. The **observer** snapshots the world before/after and computes the state diff.
+4. The **critic** verifies the step (deterministically where possible, via the model otherwise) and classifies failures.
+5. The **replanner** retries transient failures, revises the plan when an approach is wrong, pauses for human help on missing resources/permissions, and aborts impossible goals.
+
+State is saved to `bots/<name>/active_project.json` after every step, so restarts resume mid-project (tunable via the `planning` block in `settings.js`).
+
+- `!plan <goal>` — create a plan and start executing it
+- `!planStatus` — show the plan tree, statuses, progress and critic notes
+- `!planStop` — pause the project (resumable)
+- `!planResume` — continue a paused/interrupted project
+- `!planReplan` — discard the remaining steps and ask the planner for a new approach
+
+For a lighter-weight "just keep working on this" loop, `!goal <prompt>` still drives plain continuous self-prompting without plans or verification.
+
 ## Docker Container
 
 If you intend to `allow_insecure_coding`, it is a good idea to run the app in a docker container to reduce risks of running unknown code. This is strongly recommended before connecting to remote servers, although still does not guarantee complete safety.

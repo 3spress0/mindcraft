@@ -54,6 +54,22 @@ const settings = {
     // !listBuilds, quote materials with !buildMaterials, build with !buildSchematic.
     "schematic_library": "schematics",
 
+    // Planner -> executor -> observer -> critic -> replanner loop (!plan).
+    // A long-horizon goal is turned into an ordered, verifiable step plan; each
+    // step is executed via the normal ReAct/tool machinery, the world is
+    // observed before/after, and deterministic + model critics decide whether
+    // the step really succeeded and whether to retry, replan, or ask for help.
+    "planning": {
+        "planner_attempts": 2,     // model JSON retries before falling back to a single-step plan
+        "max_step_attempts": 2,    // retries of the same step before the planner revises the plan
+        "max_replans": 3,         // plan revisions before escalating to a human
+        "max_executions": 60,     // safety cap on total step executions per project
+        "executor_max_responses": 6, // ReAct turns per step (tool/command rounds)
+        "step_cooldown_ms": 1500, // pause between steps
+        "freeform_critic": true,  // use the model to judge non-deterministic expectations
+        "autoresume": true,       // resume an unfinished project after restart
+    },
+
     // Humanlike locomotion layered on top of mineflayer-pathfinder (the mineflayer
     // equivalent of Baritone). Removes robotic movement tells: instant head snaps
     // with a perfectly level stare, nonstop sprinting, zero reaction time, and a

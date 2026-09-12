@@ -11,6 +11,7 @@ import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
 import { MemoryBank } from './memory_bank.js';
 import { SelfPrompter } from './self_prompter.js';
+import { PlanRunner } from './planning/runner.js';
 import { ReactMessageManager } from './react_message_manager.js';
 import convoManager from './conversation.js';
 import { addBrowserViewer } from './vision/browser_viewer.js';
@@ -63,6 +64,7 @@ export class Agent {
         this.npc = new NPCContoller(this);
         this.memory_bank = new MemoryBank();
         this.self_prompter = new SelfPrompter(this);
+        this.plan_runner = new PlanRunner(this);
         convoManager.initAgent(this);
         await this.prompter.initPromptResources();
 
@@ -216,6 +218,8 @@ export class Agent {
         if (save_data?.self_prompt) {
             await this.self_prompter.handleLoad(save_data.self_prompt, save_data.self_prompting_state);
         }
+        // Resume any unfinished planner project (its own file survives compaction).
+        void this.plan_runner.handleLoad();
         if (save_data?.last_sender) {
             this.last_sender = save_data.last_sender;
             if (convoManager.otherAgentInGame(this.last_sender)) {
@@ -271,6 +275,10 @@ export class Agent {
         this.shut_up = true;
         if (this.self_prompter.isActive()) {
             this.self_prompter.stop(false);
+        }
+        if (this.plan_runner?.isRunning()) {
+            // fire-and-forget; loop halts at its next interruption check
+            void this.plan_runner.stop({ pause: true, message: 'stopped by user' });
         }
         convoManager.endAllConversations();
     }
@@ -474,7 +482,7 @@ export class Agent {
             ? runOptions.interruptEpoch
             : (this.message_interrupt_epoch || 0);
         const isStaleTurn = () => interruptEpoch !== (this.message_interrupt_epoch || 0);
-        const checkInterrupt = () => isStaleTurn() || this.self_prompter.shouldInterrupt(self_prompt) || this.shut_up || convoManager.responseScheduledFor(source);
+        const checkInterrupt = () => isStaleTurn() || this.self_prompter.shouldInterrupt(self_prompt) || this.shut_up || convoManager.responseScheduledFor(source) || this.plan_runner?.shouldInterrupt?.();
 
         if (checkInterrupt()) {
             console.log(`${this.name} skipped stale message from ${source} before starting a ReAct turn.`);

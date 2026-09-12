@@ -346,6 +346,13 @@ export const queryList = [
         }
     },
     {
+        name: '!planStatus',
+        description: 'Show the current planner project: goal, each step with its status (done/active/pending/failed/blocked), progress percentage and critic notes.',
+        perform: async function (agent) {
+            return pad(agent.plan_runner.statusText());
+        }
+    },
+    {
         name: '!listBuilds',
         description: 'List every build in the schematic library (Litematica .litematic, Sponge .schem, vanilla structure .nbt and blueprint .json files) with dimensions, block count and main materials.',
         perform: async function () {

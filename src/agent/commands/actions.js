@@ -384,6 +384,54 @@ export const actionsList = [
         }
     },
     {
+        name: '!plan',
+        description: 'Start a structured planner-executor-critic project: the model writes an ordered, verifiable step plan for a goal, steps are executed one at a time with real world-state verification, failed steps are retried or replanned, and progress resumes after restarts. Use for long-horizon goals (e.g. "build an automated iron farm").',
+        params: {
+            'goal': { type: 'string', description: 'The high-level goal to plan and carry out.' },
+        },
+        perform: runAsAction(async (agent, goal) => {
+            if (!goal || !goal.trim()) return 'Give a goal, e.g. !plan build an automated wheat farm with a villager breeder.';
+            const result = await agent.plan_runner.start(goal.trim());
+            if (!result.ok) return result.message;
+            return `Plan started for "${goal.trim()}". Progress with !planStatus, pause with !planStop.`;
+        })
+    },
+    {
+        name: '!planStop',
+        description: 'Pause the active planned project at its current step (state is saved; resume with !planResume).',
+        perform: runAsAction(async (agent) => {
+            await agent.plan_runner.stop({ pause: true, message: 'paused by user' });
+            return agent.plan_runner.statusText();
+        })
+    },
+    {
+        name: '!planResume',
+        description: 'Resume a paused or interrupted planned project, re-attempting the current step.',
+        perform: runAsAction(async (agent) => {
+            const result = await agent.plan_runner.resume();
+            return result.ok ? `Resumed project: ${result.project.goal}` : result.message;
+        })
+    },
+    {
+        name: '!planReplan',
+        description: 'Discard the remaining steps of the current project and ask the planner for a new approach starting at the current step.',
+        perform: runAsAction(async (agent) => {
+            const runner = agent.plan_runner;
+            if (runner.isRunning()) return 'The project is already running; it replans automatically when a step fails. Pause it with !planStop first to force a new approach.';
+            if (!runner.project) return 'No active project to replan. Start one with !plan <goal>.';
+            const step = runner.project.steps.find((s) => s.status === 'failed' || s.status === 'blocked')
+                || runner.project.steps.find((s) => s.status === 'active')
+                || runner.project.nextStep();
+            if (!step) return runner.statusText();
+            const ok = await runner.doReplan(step, {
+                outcome: 'failed', failureClass: 'wrong_approach',
+                reasoning: 'manual replan requested', diffText: '',
+            });
+            if (ok) await runner.resume();
+            return ok ? 'Plan revised and resumed.' : 'Replanner could not produce a revised plan; use !planStatus.';
+        })
+    },
+    {
         name: '!goal',
         description: 'Set a goal prompt to endlessly work towards with continuous self-prompting.',
         params: {
