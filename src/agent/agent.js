@@ -19,6 +19,8 @@ import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
+import path from 'path';
+import process from 'process';
 
 export class Agent {
     async start(load_mem=false, init_message=null, count_id=0) {
@@ -49,6 +51,12 @@ export class Agent {
             return;
         }
         
+        // Absolute workspace roots the coding-agent tools (Read/Write/Edit/Execute/...) are
+        // sandboxed to. {BOT_NAME} is substituted per-bot by Coder's ToolManager.
+        this.code_workspaces = (settings.code_workspaces || []).map(workspace => {
+            return path.join(process.cwd(), workspace);
+        });
+
         this.history = new History(this);
         this.react_messages = new ReactMessageManager(this);
         this.coder = new Coder(this);

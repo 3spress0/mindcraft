@@ -24,10 +24,19 @@ const settings = {
     "render_bot_view": false, // show bot's view in browser at localhost:3000, 3001...
 
     "allow_insecure_coding": false, // allows newAction command and model can write/run code on your computer. enable at own risk
+    "allow_agent_coding_tools": false, // allows !read/!write/!edit/!multiEdit/!grep/!glob/!ls/!execute/!lint/!todoWrite/!finishCoding commands. !execute runs code, same risk class as allow_insecure_coding
     "allow_vision": true, // allows vision model to interpret screenshots as inputs
     "blocked_actions" : ["!checkBlueprint", "!checkBlueprintLevel", "!getBlueprint", "!getBlueprintLevel"] , // commands to disable and remove from docs. Ex: ["!setMode"]
     "code_timeout_mins": -1, // minutes code is allowed to run. -1 for no timeout
     "relevant_docs_count": 5, // number of relevant code function docs to select for prompting. -1 for all
+
+    // Workspace roots the coding-agent tools (Read/Write/Edit/MultiEdit/Grep/Glob/LS/Execute/Lint) are
+    // strictly sandboxed to. {BOT_NAME} is substituted with the active bot's name. Relative to project root.
+    "code_workspaces": [
+        "bots/{BOT_NAME}/action-code",
+        "bots/{BOT_NAME}/learnedSkills",
+        "bots/{BOT_NAME}/"
+    ],
 
     "max_messages": 120, // message-count context window; compact considers messages after the latest compact boundary
     "compact_message_threshold_percent": 80, // compact the whole active context when it reaches this percent of max_messages

@@ -6,6 +6,7 @@ import * as skills from './library/skills.js';
 import * as world from './library/world.js';
 import { Vec3 } from 'vec3';
 import {ESLint} from "eslint";
+import { ToolManager } from './tools/toolManager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -16,6 +17,9 @@ export class Coder {
         this.fp = '/bots/'+agent.name+'/action-code/';
         this.code_template = '';
         this.code_lint_template = '';
+        // Coding-agent tool suite (read/write/edit/multiEdit/grep/glob/ls/execute/lint/todoWrite/finishCoding),
+        // exposed to the model as native !commands via commands/coding_tools.js -> tool_adapter.js.
+        this.codeToolsManager = new ToolManager(agent);
 
         readFile(path.join(__dirname, '../../bots/execTemplate.js'), 'utf8', (err, data) => {
             if (err) throw err;
