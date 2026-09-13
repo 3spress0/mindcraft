@@ -52,6 +52,18 @@ export const DEFAULT_THRESHOLDS = {
             minCompletion: 0.6,
             maxDeaths: 2,
         },
+        adversarial_depleted_alternatives_benchmark: {
+            minScore: 50,
+            minCompletion: 0.8,
+            maxReplans: 4,
+            maxRetries: 6,
+        },
+        adversarial_trap_target_benchmark: {
+            minScore: 50,
+            minCompletion: 0.8,
+            maxReplans: 4,
+            maxDeaths: 1,
+        },
     },
 };
 
@@ -189,13 +201,14 @@ export class ThresholdChecker {
             const baselineAvg = this.baseline.avgScore || 0;
             if (baselineAvg > 0) {
                 const regressionPct = ((baselineAvg - avgScore) / baselineAvg) * 100;
-                if (regressionPct > (global.maxRegressionPct || 15)) {
+                const maxReg = global.maxRegressionPct ?? 15;
+                if (regressionPct > maxReg) {
                     violations.push({
                         type: 'regression_from_baseline',
                         actual: avgScore,
                         expected: baselineAvg,
                         regressionPct,
-                        message: `Regression ${regressionPct.toFixed(1)}% from baseline (baseline ${baselineAvg.toFixed(1)}, current ${avgScore.toFixed(1)}) exceeds ${global.maxRegressionPct}% threshold`,
+                        message: `Regression ${regressionPct.toFixed(1)}% from baseline (baseline ${baselineAvg.toFixed(1)}, current ${avgScore.toFixed(1)}) exceeds ${maxReg}% threshold`,
                     });
                 }
             }
@@ -220,7 +233,8 @@ export class ThresholdChecker {
                     if (!currentScores.length) continue;
                     const currentAvgSc = currentScores.reduce((a, b) => a + b, 0) / currentScores.length;
                     const regPct = ((baselineAvgSc - currentAvgSc) / Math.max(1, baselineAvgSc)) * 100;
-                    if (regPct > (global.maxRegressionPct || 15)) {
+                    const maxReg = global.maxRegressionPct ?? 15;
+                    if (regPct > maxReg) {
                         violations.push({
                             type: 'scenario_regression',
                             scenario,

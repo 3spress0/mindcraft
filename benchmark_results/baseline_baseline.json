@@ -1,15 +1,15 @@
 {
   "name": "baseline",
-  "createdAt": 1789302809796,
+  "createdAt": 1789322740696,
   "runs": [
     {
-      "runId": "run_mtzsozyj_izpx2b",
+      "runId": "run_mu04k6sg_8lwxxb",
       "scenario": "wheat_farm_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 487,
-      "startedAt": 1789302809612,
-      "endedAt": 1789302809683,
-      "execution_time": 71,
+      "seed": 769,
+      "startedAt": 1789322740576,
+      "endedAt": 1789322740608,
+      "execution_time": 32,
       "completion": true,
       "completionPct": 100,
       "total_steps": 8,
@@ -87,16 +87,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsozyj_izpx2b"
+      "replay_log_id": "run_mu04k6sg_8lwxxb"
     },
     {
-      "runId": "run_mtzsp00m_y9j6ak",
+      "runId": "run_mu04k6te_ejhcie",
       "scenario": "iron_mine_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 560,
-      "startedAt": 1789302809686,
-      "endedAt": 1789302809724,
-      "execution_time": 38,
+      "seed": 900,
+      "startedAt": 1789322740610,
+      "endedAt": 1789322740635,
+      "execution_time": 25,
       "completion": true,
       "completionPct": 100,
       "total_steps": 5,
@@ -183,16 +183,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsp00m_y9j6ak"
+      "replay_log_id": "run_mu04k6te_ejhcie"
     },
     {
-      "runId": "run_mtzsp01p_iz5hpy",
+      "runId": "run_mu04k6u3_5pqag5",
       "scenario": "shelter_build_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 976,
-      "startedAt": 1789302809725,
-      "endedAt": 1789302809737,
-      "execution_time": 12,
+      "seed": 1051,
+      "startedAt": 1789322740635,
+      "endedAt": 1789322740644,
+      "execution_time": 9,
       "completion": true,
       "completionPct": 100,
       "total_steps": 5,
@@ -268,16 +268,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsp01p_iz5hpy"
+      "replay_log_id": "run_mu04k6u3_5pqag5"
     },
     {
-      "runId": "run_mtzsp022_x8l0d0",
+      "runId": "run_mu04k6ud_hps3zo",
       "scenario": "tree_farm_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 175,
-      "startedAt": 1789302809738,
-      "endedAt": 1789302809752,
-      "execution_time": 14,
+      "seed": 1061,
+      "startedAt": 1789322740645,
+      "endedAt": 1789322740655,
+      "execution_time": 10,
       "completion": true,
       "completionPct": 100,
       "total_steps": 7,
@@ -355,16 +355,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsp022_x8l0d0"
+      "replay_log_id": "run_mu04k6ud_hps3zo"
     },
     {
-      "runId": "run_mtzsp02h_rulypm",
+      "runId": "run_mu04k6uo_l9kc6k",
       "scenario": "village_outpost_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 1114,
-      "startedAt": 1789302809753,
-      "endedAt": 1789302809777,
-      "execution_time": 24,
+      "seed": 397,
+      "startedAt": 1789322740656,
+      "endedAt": 1789322740669,
+      "execution_time": 13,
       "completion": true,
       "completionPct": 100,
       "total_steps": 7,
@@ -449,16 +449,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsp02h_rulypm"
+      "replay_log_id": "run_mu04k6uo_l9kc6k"
     },
     {
-      "runId": "run_mtzsp036_0xqhba",
+      "runId": "run_mu04k6v1_my2ojo",
       "scenario": "nether_expedition_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 883,
-      "startedAt": 1789302809778,
-      "endedAt": 1789302809792,
-      "execution_time": 14,
+      "seed": 169,
+      "startedAt": 1789322740669,
+      "endedAt": 1789322740680,
+      "execution_time": 11,
       "completion": true,
       "completionPct": 100,
       "total_steps": 8,
@@ -550,10 +550,180 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsp036_0xqhba"
+      "replay_log_id": "run_mu04k6v1_my2ojo"
+    },
+    {
+      "runId": "run_mu04k6vc_x4r2q6",
+      "scenario": "adversarial_depleted_alternatives_benchmark",
+      "plannerModel": "deterministic-baseline",
+      "seed": 577,
+      "startedAt": 1789322740680,
+      "endedAt": 1789322740687,
+      "execution_time": 7,
+      "completion": true,
+      "completionPct": 100,
+      "total_steps": 4,
+      "successful_steps": 4,
+      "failed_steps": 1,
+      "retries": 1,
+      "replans": 0,
+      "recovery_actions": {
+        "search": 1
+      },
+      "recovery_reasons": {
+        "searching_target": 1
+      },
+      "interruptions": 1,
+      "resumes": 1,
+      "deaths": 0,
+      "resource_waste": 0,
+      "LLM_calls": 1,
+      "LLM_failures": 0,
+      "recovery_quality": {
+        "expected_total": 3,
+        "expected_satisfied": 3,
+        "correct_action_rate": 1,
+        "recovery_success_rate": 1,
+        "avg_attempts_per_failure": 1.2,
+        "waste_efficiency": 1,
+        "score": 99,
+        "checks": [
+          {
+            "eventId": "primary_depleted",
+            "expectedAction": "search",
+            "expectedReason": "deposit_unknown",
+            "satisfied": true,
+            "description": "Both primary and alternative depleted — must search, not loop between dead deposits"
+          },
+          {
+            "eventId": "alternative_depleted",
+            "expectedAction": "search",
+            "expectedReason": "deposit_unknown",
+            "satisfied": true,
+            "description": "When both primary and alternative depleted, must search not loop"
+          },
+          {
+            "eventId": "interruption_search",
+            "expectedAction": "resume",
+            "expectedReason": null,
+            "satisfied": true,
+            "description": "Should resume after interruption"
+          }
+        ]
+      },
+      "score": {
+        "total": 98,
+        "completion": 40,
+        "efficiency": 23,
+        "recovery": 25,
+        "robustness": 10,
+        "breakdown": {
+          "completionPct": 100,
+          "retries": 1,
+          "replans": 0,
+          "waste": 0,
+          "llmCalls": 1,
+          "recoveryQuality": 99,
+          "deaths": 0,
+          "interruptionsHandled": true
+        }
+      },
+      "replay_log_id": "run_mu04k6vc_x4r2q6"
+    },
+    {
+      "runId": "run_mu04k6vj_3nsljh",
+      "scenario": "adversarial_trap_target_benchmark",
+      "plannerModel": "deterministic-baseline",
+      "seed": 661,
+      "startedAt": 1789322740687,
+      "endedAt": 1789322740694,
+      "execution_time": 7,
+      "completion": true,
+      "completionPct": 100,
+      "total_steps": 4,
+      "successful_steps": 4,
+      "failed_steps": 2,
+      "retries": 2,
+      "replans": 0,
+      "recovery_actions": {
+        "retreat": 2
+      },
+      "recovery_reasons": {
+        "danger_nearby": 2
+      },
+      "interruptions": 1,
+      "resumes": 1,
+      "deaths": 0,
+      "resource_waste": 0,
+      "LLM_calls": 1,
+      "LLM_failures": 0,
+      "recovery_quality": {
+        "expected_total": 5,
+        "expected_satisfied": 5,
+        "correct_action_rate": 1,
+        "recovery_success_rate": 1,
+        "avg_attempts_per_failure": 1.3333333333333333,
+        "waste_efficiency": 1,
+        "score": 98,
+        "checks": [
+          {
+            "eventId": "trap_known_target",
+            "expectedAction": "retreat",
+            "expectedReason": "danger_nearby",
+            "satisfied": true,
+            "description": "Must prioritize retreat over blind navigation to trapped target"
+          },
+          {
+            "eventId": "diamond_depleted_trap",
+            "expectedAction": "retreat",
+            "expectedReason": "danger_nearby",
+            "satisfied": true,
+            "description": "Even with depleted target, safety should be prioritized — evidence should show danger_nearby not just target_depleted"
+          },
+          {
+            "eventId": "secondary_threat",
+            "expectedAction": "retreat",
+            "expectedReason": "danger_nearby",
+            "satisfied": true,
+            "description": "Second threat should also trigger retreat"
+          },
+          {
+            "eventId": "interruption_trap",
+            "expectedAction": "resume",
+            "expectedReason": null,
+            "satisfied": true,
+            "description": "Should resume after trap interruption"
+          },
+          {
+            "eventId": "outpost_damage",
+            "expectedAction": "replan",
+            "expectedReason": "construction_damaged",
+            "satisfied": true,
+            "description": "Damage after building should trigger replan"
+          }
+        ]
+      },
+      "score": {
+        "total": 96,
+        "completion": 40,
+        "efficiency": 21,
+        "recovery": 25,
+        "robustness": 10,
+        "breakdown": {
+          "completionPct": 100,
+          "retries": 2,
+          "replans": 0,
+          "waste": 0,
+          "llmCalls": 1,
+          "recoveryQuality": 98,
+          "deaths": 0,
+          "interruptionsHandled": true
+        }
+      },
+      "replay_log_id": "run_mu04k6vj_3nsljh"
     }
   ],
-  "avgScore": 95,
+  "avgScore": 95.5,
   "avgCompletion": 1,
   "scenarios": [
     "wheat_farm_benchmark",
@@ -561,6 +731,8 @@
     "shelter_build_benchmark",
     "tree_farm_benchmark",
     "village_outpost_benchmark",
-    "nether_expedition_benchmark"
+    "nether_expedition_benchmark",
+    "adversarial_depleted_alternatives_benchmark",
+    "adversarial_trap_target_benchmark"
   ]
 }

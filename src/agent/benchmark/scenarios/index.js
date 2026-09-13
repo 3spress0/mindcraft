@@ -8,6 +8,8 @@ import { createShelterBuildScenario } from './shelter_build.js';
 import { createTreeFarmScenario } from './tree_farm.js';
 import { createVillageOutpostScenario } from './village_outpost.js';
 import { createNetherExpeditionScenario } from './nether_expedition.js';
+import { createAdversarialDepletedAlternativesScenario } from './adversarial_depleted_alternatives.js';
+import { createAdversarialTrapTargetScenario } from './adversarial_trap_target.js';
 
 export const SCENARIO_FACTORIES = {
     wheat_farm_benchmark: createWheatFarmScenario,
@@ -16,6 +18,8 @@ export const SCENARIO_FACTORIES = {
     tree_farm_benchmark: createTreeFarmScenario,
     village_outpost_benchmark: createVillageOutpostScenario,
     nether_expedition_benchmark: createNetherExpeditionScenario,
+    adversarial_depleted_alternatives_benchmark: createAdversarialDepletedAlternativesScenario,
+    adversarial_trap_target_benchmark: createAdversarialTrapTargetScenario,
 };
 
 export const ALL_SCENARIOS = Object.keys(SCENARIO_FACTORIES);
@@ -37,4 +41,6 @@ export {
     createTreeFarmScenario,
     createVillageOutpostScenario,
     createNetherExpeditionScenario,
+    createAdversarialDepletedAlternativesScenario,
+    createAdversarialTrapTargetScenario,
 };

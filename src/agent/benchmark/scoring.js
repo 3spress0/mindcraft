@@ -22,6 +22,8 @@ export const SCENARIO_DIFFICULTY = {
     tree_farm_benchmark: 1.0,
     village_outpost_benchmark: 1.3,
     nether_expedition_benchmark: 1.5,
+    adversarial_depleted_alternatives_benchmark: 1.4,
+    adversarial_trap_target_benchmark: 1.6,
 };
 
 /**
