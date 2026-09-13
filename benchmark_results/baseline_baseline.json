@@ -1,15 +1,15 @@
 {
   "name": "baseline",
-  "createdAt": 1789322740696,
+  "createdAt": 1789322780197,
   "runs": [
     {
-      "runId": "run_mu04k6sg_8lwxxb",
+      "runId": "run_mu04l19g_69814i",
       "scenario": "wheat_farm_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 769,
-      "startedAt": 1789322740576,
-      "endedAt": 1789322740608,
-      "execution_time": 32,
+      "seed": 867,
+      "startedAt": 1789322780068,
+      "endedAt": 1789322780103,
+      "execution_time": 35,
       "completion": true,
       "completionPct": 100,
       "total_steps": 8,
@@ -87,16 +87,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mu04k6sg_8lwxxb"
+      "replay_log_id": "run_mu04l19g_69814i"
     },
     {
-      "runId": "run_mu04k6te_ejhcie",
+      "runId": "run_mu04l1ag_kylod0",
       "scenario": "iron_mine_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 900,
-      "startedAt": 1789322740610,
-      "endedAt": 1789322740635,
-      "execution_time": 25,
+      "seed": 155,
+      "startedAt": 1789322780104,
+      "endedAt": 1789322780130,
+      "execution_time": 26,
       "completion": true,
       "completionPct": 100,
       "total_steps": 5,
@@ -183,16 +183,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mu04k6te_ejhcie"
+      "replay_log_id": "run_mu04l1ag_kylod0"
     },
     {
-      "runId": "run_mu04k6u3_5pqag5",
+      "runId": "run_mu04l1b7_8az50b",
       "scenario": "shelter_build_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 1051,
-      "startedAt": 1789322740635,
-      "endedAt": 1789322740644,
-      "execution_time": 9,
+      "seed": 380,
+      "startedAt": 1789322780131,
+      "endedAt": 1789322780141,
+      "execution_time": 10,
       "completion": true,
       "completionPct": 100,
       "total_steps": 5,
@@ -268,16 +268,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mu04k6u3_5pqag5"
+      "replay_log_id": "run_mu04l1b7_8az50b"
     },
     {
-      "runId": "run_mu04k6ud_hps3zo",
+      "runId": "run_mu04l1bi_t9052l",
       "scenario": "tree_farm_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 1061,
-      "startedAt": 1789322740645,
-      "endedAt": 1789322740655,
-      "execution_time": 10,
+      "seed": 865,
+      "startedAt": 1789322780142,
+      "endedAt": 1789322780154,
+      "execution_time": 12,
       "completion": true,
       "completionPct": 100,
       "total_steps": 7,
@@ -355,16 +355,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mu04k6ud_hps3zo"
+      "replay_log_id": "run_mu04l1bi_t9052l"
     },
     {
-      "runId": "run_mu04k6uo_l9kc6k",
+      "runId": "run_mu04l1bu_j88y4h",
       "scenario": "village_outpost_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 397,
-      "startedAt": 1789322740656,
-      "endedAt": 1789322740669,
-      "execution_time": 13,
+      "seed": 505,
+      "startedAt": 1789322780154,
+      "endedAt": 1789322780169,
+      "execution_time": 15,
       "completion": true,
       "completionPct": 100,
       "total_steps": 7,
@@ -449,16 +449,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mu04k6uo_l9kc6k"
+      "replay_log_id": "run_mu04l1bu_j88y4h"
     },
     {
-      "runId": "run_mu04k6v1_my2ojo",
+      "runId": "run_mu04l1ca_m2tahc",
       "scenario": "nether_expedition_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 169,
-      "startedAt": 1789322740669,
-      "endedAt": 1789322740680,
-      "execution_time": 11,
+      "seed": 574,
+      "startedAt": 1789322780170,
+      "endedAt": 1789322780180,
+      "execution_time": 10,
       "completion": true,
       "completionPct": 100,
       "total_steps": 8,
@@ -550,16 +550,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mu04k6v1_my2ojo"
+      "replay_log_id": "run_mu04l1ca_m2tahc"
     },
     {
-      "runId": "run_mu04k6vc_x4r2q6",
+      "runId": "run_mu04l1cl_3l6am3",
       "scenario": "adversarial_depleted_alternatives_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 577,
-      "startedAt": 1789322740680,
-      "endedAt": 1789322740687,
-      "execution_time": 7,
+      "seed": 612,
+      "startedAt": 1789322780181,
+      "endedAt": 1789322780187,
+      "execution_time": 6,
       "completion": true,
       "completionPct": 100,
       "total_steps": 4,
@@ -628,16 +628,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mu04k6vc_x4r2q6"
+      "replay_log_id": "run_mu04l1cl_3l6am3"
     },
     {
-      "runId": "run_mu04k6vj_3nsljh",
+      "runId": "run_mu04l1cr_jhfjh1",
       "scenario": "adversarial_trap_target_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 661,
-      "startedAt": 1789322740687,
-      "endedAt": 1789322740694,
-      "execution_time": 7,
+      "seed": 404,
+      "startedAt": 1789322780187,
+      "endedAt": 1789322780195,
+      "execution_time": 8,
       "completion": true,
       "completionPct": 100,
       "total_steps": 4,
@@ -720,7 +720,7 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mu04k6vj_3nsljh"
+      "replay_log_id": "run_mu04l1cr_jhfjh1"
     }
   ],
   "avgScore": 95.5,
