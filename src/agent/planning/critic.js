@@ -56,6 +56,7 @@ export const FAILURE = {
     MISSING_RESOURCES: 'missing_resources',
     IMPOSSIBLE: 'impossible',
     HUMAN: 'human',
+    CONSTRUCTION_DAMAGED: 'construction_damaged', // expected structure was damaged/destroyed
 };
 
 /**
@@ -67,10 +68,14 @@ export function classifyFailure({ stepText = '', diff = {}, resultText = '', evi
     const haystack = `${stepText}\n${resultText}\n${diff?.text || ''}\n${evidence}`.toLowerCase();
 
     if (died || diff.healthDelta <= -6) return FAILURE.DANGER;
+    if (/\b(construction damaged|structure damaged|blocks destroyed|building damaged|farm damaged|mismatched blocks|structure intact|expected \d+ blocks)\b/.test(haystack) ||
+        (/\b(damaged|destroyed|missing)\b/.test(haystack) && /\b(blocks|structure|construction|build)\b/.test(haystack) && /mismatched|expected/.test(haystack))) {
+        return FAILURE.CONSTRUCTION_DAMAGED;
+    }
     if (/\b(no permission|not allowed|operator|whitelist|need op|cannot craft|missing ingredient|out of materials|don't have|do not have)\b/.test(haystack)) {
         return FAILURE.MISSING_RESOURCES;
     }
-    if (/\b(can't find|cannot find|could not find|not found|no such|no .{0,20} nearby|out of range)\b/.test(haystack)) {
+    if (/\b(can't find|cannot find|could not find|not found|no such|no .{0,20} nearby|out of range|found 0 .* within)\b/.test(haystack)) {
         return FAILURE.TARGET_MISSING;
     }
     if (/\b(no path|path blocked|cannot reach|can't reach|unreachable|stuck|obstructed|destination too far)\b/.test(haystack)) {
@@ -202,7 +207,7 @@ export class Critic {
                 stepText: `${step.title}\n${step.instruction}\n${step.expected?.description || ''}`,
                 diff,
                 resultText,
-                evidence: transition.evidence || '',
+                evidence: [check.decidable ? check.evidence : null, transition.decidable ? transition.evidence : null].filter(Boolean).join('; ') || transition.evidence || '',
                 died,
             });
         }

@@ -12,6 +12,7 @@ import { NPCContoller } from './npc/controller.js';
 import { MemoryBank } from './memory_bank.js';
 import { SelfPrompter } from './self_prompter.js';
 import { PlanRunner } from './planning/runner.js';
+import { ConstructionRegistry } from './planning/construction_damage.js';
 import { WorldModel } from './world_model/world_model.js';
 import { WorldModelStore } from './world_model/store.js';
 import { ObservationCollector } from './observation/collector.js';
@@ -71,6 +72,8 @@ export class Agent {
         this.world_store = new WorldModelStore(this.name);
         this.observation_collector = null;
         this.plan_runner = new PlanRunner(this);
+        this.construction_registry = new ConstructionRegistry();
+        this.construction_snapshots = this.construction_registry; // alias for observer compatibility
         convoManager.initAgent(this);
         await this.prompter.initPromptResources();
 

@@ -1,17 +1,59 @@
-import { io } from 'socket.io-client';
-import convoManager from './conversation.js';
-import { setSettings } from './settings.js';
-import { getFullState } from './library/full_state.js';
+/**
+ * mindserver_proxy.js — resilient version without top-level circular await.
+ * socket.io-client, conversation, settings, full_state are loaded lazily.
+ */
 
-// agent's individual connection to the mindserver
-// always connect to localhost
+let io = null;
+let _convoManager = null;
+let _setSettings = () => {};
+let _getFullState = () => ({});
+
+async function loadIo() {
+    if (io) return io;
+    try {
+        const mod = await import('socket.io-client');
+        io = mod.io || mod.default?.io || mod.default || mod;
+    } catch {
+        io = null;
+    }
+    return io;
+}
+
+async function loadConvo() {
+    if (_convoManager) return _convoManager;
+    try {
+        const mod = await import('./conversation.js');
+        _convoManager = mod.default || mod;
+    } catch {
+        _convoManager = { receiveFromBot: () => {}, updateAgents: () => {} };
+    }
+    return _convoManager;
+}
+
+async function loadSettings() {
+    try {
+        const mod = await import('./settings.js');
+        _setSettings = mod.setSettings || (() => {});
+    } catch {}
+}
+
+async function loadFullState() {
+    try {
+        const mod = await import('./library/full_state.js');
+        _getFullState = mod.getFullState || (() => ({}));
+    } catch {}
+}
+
+void loadIo();
+void loadConvo();
+void loadSettings();
+void loadFullState();
 
 class MindServerProxy {
     constructor() {
         if (MindServerProxy.instance) {
             return MindServerProxy.instance;
         }
-        
         this.socket = null;
         this.connected = false;
         this.agents = [];
@@ -20,9 +62,10 @@ class MindServerProxy {
 
     async connect(name, port) {
         if (this.connected) return;
-        
         this.name = name;
-        this.socket = io(`http://localhost:${port}`);
+        const ioFn = await loadIo();
+        if (!ioFn) throw new Error('socket.io-client not available');
+        this.socket = ioFn(`http://localhost:${port}`);
 
         await new Promise((resolve, reject) => {
             this.socket.on('connect', resolve);
@@ -35,6 +78,8 @@ class MindServerProxy {
         this.connected = true;
         console.log(name, 'connected to MindServer');
 
+        const convo = await loadConvo();
+
         this.socket.on('disconnect', () => {
             console.log('Disconnected from MindServer');
             this.connected = false;
@@ -44,12 +89,12 @@ class MindServerProxy {
         });
 
         this.socket.on('chat-message', (agentName, json) => {
-            convoManager.receiveFromBot(agentName, json);
+            convo.receiveFromBot(agentName, json);
         });
 
         this.socket.on('agents-status', (agents) => {
             this.agents = agents;
-            convoManager.updateAgents(agents);
+            convo.updateAgents(agents);
             if (this.agent?.task) {
                 console.log(this.agent.name, 'updating available agents');
                 this.agent.task.updateAvailableAgents(agents);
@@ -65,7 +110,7 @@ class MindServerProxy {
             console.log(`Stopping agent ${this.name} by MindServer request`);
             this.agent.cleanKill('Stopped by MindServer.', 0);
         });
-		
+
         this.socket.on('send-message', (data) => {
             try {
                 this.agent.respondFunc(data.from, data.message);
@@ -74,9 +119,10 @@ class MindServerProxy {
             }
         });
 
-        this.socket.on('get-full-state', (callback) => {
+        this.socket.on('get-full-state', async (callback) => {
             try {
-                const state = getFullState(this.agent);
+                await loadFullState();
+                const state = _getFullState(this.agent);
                 callback(state);
             } catch (error) {
                 console.error('Error getting full state:', error);
@@ -84,18 +130,18 @@ class MindServerProxy {
             }
         });
 
-        // Request settings and wait for response
         await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 reject(new Error('Settings request timed out after 5 seconds'));
             }, 5000);
 
-            this.socket.emit('get-settings', name, (response) => {
+            this.socket.emit('get-settings', name, async (response) => {
                 clearTimeout(timeout);
                 if (response.error) {
                     return reject(new Error(response.error));
                 }
-                setSettings(response.settings);
+                await loadSettings();
+                _setSettings(response.settings);
                 this.socket.emit('connect-agent-process', name);
                 resolve();
             });
@@ -115,11 +161,11 @@ class MindServerProxy {
     }
 
     login() {
-        this.socket.emit('login-agent', this.agent.name);
+        if (this.socket) this.socket.emit('login-agent', this.agent.name);
     }
 
     shutdown() {
-        this.socket.emit('shutdown');
+        if (this.socket) this.socket.emit('shutdown');
     }
 
     getSocket() {
@@ -127,20 +173,18 @@ class MindServerProxy {
     }
 }
 
-// Create and export a singleton instance
 export const serverProxy = new MindServerProxy();
 
-// for chatting with other bots
 export function sendBotChatToServer(agentName, json) {
-    serverProxy.getSocket().emit('chat-message', agentName, json);
+    const sock = serverProxy.getSocket();
+    if (sock) sock.emit('chat-message', agentName, json);
 }
 
-// for sending general output to server for display
 export function sendOutputToServer(agentName, message) {
-    serverProxy.getSocket().emit('bot-output', agentName, message);
+    const sock = serverProxy.getSocket();
+    if (sock) sock.emit('bot-output', agentName, message);
 }
 
-// for sending structured observability events to the UI
 export function sendTraceEventToServer(agentName, event) {
     const socket = serverProxy.getSocket();
     if (socket?.connected) {

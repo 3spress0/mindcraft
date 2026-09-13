@@ -45,6 +45,7 @@ export const POLICY_PROFILES = {
         [FAILURE.DANGER]: RECOVERY_ACTION.RETREAT,
         [FAILURE.MISSING_RESOURCES]: RECOVERY_ACTION.GATHER,
         [FAILURE.IMPOSSIBLE]: RECOVERY_ACTION.ABORT,
+        [FAILURE.CONSTRUCTION_DAMAGED]: RECOVERY_ACTION.REPLAN,
     },
     // Explorer: unknown targets are a reason to scout, not replan; treats
     // generic glitches as simple retries and only retreats from real damage.
@@ -56,6 +57,7 @@ export const POLICY_PROFILES = {
         [FAILURE.DANGER]: RECOVERY_ACTION.RETREAT,
         [FAILURE.MISSING_RESOURCES]: RECOVERY_ACTION.GATHER,
         [FAILURE.IMPOSSIBLE]: RECOVERY_ACTION.ABORT,
+        [FAILURE.CONSTRUCTION_DAMAGED]: RECOVERY_ACTION.REPLAN,
     },
     // Builder: prefer routing to known deposits/stations; escalate to a human
     // quickly when materials or safety cannot be resolved automatically.
@@ -67,6 +69,7 @@ export const POLICY_PROFILES = {
         [FAILURE.DANGER]: RECOVERY_ACTION.RETREAT,
         [FAILURE.MISSING_RESOURCES]: RECOVERY_ACTION.GATHER,
         [FAILURE.IMPOSSIBLE]: RECOVERY_ACTION.ABORT,
+        [FAILURE.CONSTRUCTION_DAMAGED]: RECOVERY_ACTION.REPLAN,
     },
     // Survival: danger always means retreat; after one failed recovery attempt
     // the planner re-plans instead of gambling on a retry.
@@ -78,6 +81,7 @@ export const POLICY_PROFILES = {
         [FAILURE.DANGER]: RECOVERY_ACTION.RETREAT,
         [FAILURE.MISSING_RESOURCES]: RECOVERY_ACTION.GATHER,
         [FAILURE.IMPOSSIBLE]: RECOVERY_ACTION.ABORT,
+        [FAILURE.CONSTRUCTION_DAMAGED]: RECOVERY_ACTION.REPLAN,
     },
 };
 

@@ -13,6 +13,7 @@ import { Vec3 } from 'vec3';
 import * as world from '../library/world.js';
 import { library, formatMaterialCounts } from '../schematics/library.js';
 import { blockSatisfied, rotateXZ } from './utils.js';
+import { createExpectedSnapshot } from '../planning/construction_damage.js';
 
 const MAX_REPAIR_PASSES = 3;
 // Above these footprints automatic placement gets unreliable; ask for coords.
@@ -103,6 +104,16 @@ export async function buildSchematic(agent, name, position = null, orientation =
 
     // Persist before the first pass so interruptions/gathering trips resume here.
     agent.npc.data.built[entry.key] = { name: entry.key, position, orientation };
+
+    // Snapshot expected structure for damage detection
+    try {
+        if (agent.construction_registry) {
+            const snap = createExpectedSnapshot(entry.key, goal, position, orientation);
+            agent.construction_registry.add(snap);
+        }
+    } catch (err) {
+        console.warn(`[schematic] failed to snapshot expected structure: ${err.message}`);
+    }
 
     const warnings = [];
     if (Object.keys(unknown).length > 0) {
