@@ -161,6 +161,58 @@ export function checkExpectation(agent, expected, before, after) {
             const level = Number(expected.level ?? 10);
             return verdict(after.health >= level, `health ${after.health} (expected >= ${level})`);
         }
+        case 'construction': {
+            try {
+                const registry = agent?.construction_registry || agent?.construction_snapshots;
+                let snapshot = expected.snapshot || null;
+                if (!snapshot && expected.snapshotId && registry) {
+                    snapshot = typeof registry.get === 'function' ? registry.get(expected.snapshotId) : registry[expected.snapshotId];
+                }
+                if (!snapshot) {
+                    if (Array.isArray(expected.expectedList)) {
+                        snapshot = { id: expected.snapshotId || 'inline', name: expected.name || 'construction', totalExpected: expected.expectedList.length, expectedList: expected.expectedList };
+                    } else {
+                        return { decidable: false, satisfied: false, evidence: expected.description || 'construction check (no snapshot)' };
+                    }
+                }
+                const tolerance = expected.tolerance ?? 0.05;
+                const threshold = expected.threshold ?? tolerance;
+                let matched = 0;
+                let mismatched = 0;
+                const missing = [];
+                const wrong = [];
+                const bot = agent?.bot;
+                if (!bot || typeof bot.blockAt !== 'function') {
+                    return { decidable: false, satisfied: false, evidence: 'no bot for construction check' };
+                }
+                for (const entry of snapshot.expectedList || []) {
+                    let actual = 'air';
+                    try {
+                        const b = bot.blockAt({ x: entry.x, y: entry.y, z: entry.z });
+                        actual = b ? b.name : 'air';
+                    } catch { actual = 'air'; }
+                    const exp = entry.expected;
+                    const ok = exp === actual || (exp === 'farmland' && (actual === 'farmland' || actual === 'dirt' || actual === 'grass_block')) || actual.includes(exp) || exp.includes(actual);
+                    if (ok) matched++;
+                    else {
+                        mismatched++;
+                        if (actual === 'air') missing.push(entry);
+                        else wrong.push({ ...entry, actual });
+                    }
+                }
+                const total = snapshot.totalExpected || snapshot.expectedList.length;
+                const ratio = total ? mismatched / total : 0;
+                const damaged = ratio > threshold;
+                const evidence = damaged ?
+                    `construction damaged: expected ${total} blocks, ${matched} matched, ${mismatched} mismatched (${Math.round(ratio * 100)}% damaged)` +
+                    (missing.length ? `; ${missing.length} missing` : '') +
+                    (wrong.length ? `; ${wrong.length} wrong` : '') :
+                    `construction intact: ${matched}/${total} blocks matched`;
+                return verdict(!damaged, evidence);
+            } catch (err) {
+                return { decidable: false, satisfied: false, evidence: `construction check error: ${err.message}` };
+            }
+        }
         case 'freeform':
         default:
             return { decidable: false, satisfied: false, evidence: expected.description || expected.kind };

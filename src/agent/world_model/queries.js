@@ -148,7 +148,18 @@ export function recoveryContext(model, step, pos, { threatRadius = 16 } = {}) {
     const costs = needed.filter((r) => r.source === 'cost');
     const target = stepTarget(step);
 
-    const itemQueries = gains.map((r) => {
+    // For block_near/entity_near, also treat target name as a resource query so depleted handling works
+    const extraGains = [];
+    if (target?.type === 'block' || target?.type === 'entity') {
+        const name = target.name;
+        if (name && !gains.some(g => g.item === name)) {
+            extraGains.push({ item: name, need: 1, source: 'gain' });
+        }
+    }
+
+    const allGains = [...gains, ...extraGains];
+
+    const itemQueries = allGains.map((r) => {
         const { alternative, depleted } = nearestDeposit(model, r.item, pos);
         return { ...r, alternative, depleted };
     });
@@ -159,7 +170,16 @@ export function recoveryContext(model, step, pos, { threatRadius = 16 } = {}) {
 
     let knownTarget = null;
     if (target?.type === 'entity') knownTarget = nearestEntityFact(model, target.name, pos);
-    else if (target?.type === 'block') knownTarget = nearestStructure(model, target.name, pos);
+    else if (target?.type === 'block') {
+        knownTarget = nearestStructure(model, target.name, pos);
+        // Fallback: if no structure, check deposits as known target
+        if (!knownTarget) {
+            const dep = nearestDeposit(model, target.name, pos);
+            if (dep.alternative) {
+                knownTarget = { fact: dep.alternative.fact, distance: dep.alternative.distance };
+            }
+        }
+    }
 
     const threats = threatsNear(model, pos, threatRadius);
     return {

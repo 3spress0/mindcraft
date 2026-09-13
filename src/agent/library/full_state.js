@@ -1,18 +1,71 @@
-import { 
-    getPosition,
-    getBiomeName,
-    getNearbyPlayerNames,
-    getInventoryCounts,
-    getNearbyEntityTypes,
-    getBlockAtPosition,
-    getFirstBlockAboveHead
-} from "./world.js";
-import convoManager from '../conversation.js';
+/**
+ * full_state.js — resilient version without top-level await cycles.
+ */
+
+let _world = null;
+let _convoManager = null;
+
+async function loadWorld() {
+    if (_world) return _world;
+    try {
+        const mod = await import("./world.js");
+        _world = mod;
+    } catch {
+        _world = {
+            getPosition: (bot) => bot.entity.position,
+            getBiomeName: () => 'unknown',
+            getNearbyPlayerNames: () => [],
+            getInventoryCounts: (bot) => {
+                const inv = {};
+                for (const slot of bot.inventory.slots || []) if (slot?.name) inv[slot.name] = (inv[slot.name]||0)+slot.count;
+                return inv;
+            },
+            getNearbyEntityTypes: () => [],
+            getBlockAtPosition: (bot, x=0,y=0,z=0) => {
+                try { return bot.blockAt(bot.entity.position.offset(x,y,z)) || {name:'air'}; } catch { return {name:'air'}; }
+            },
+            getFirstBlockAboveHead: () => 'none',
+        };
+    }
+    return _world;
+}
+
+async function loadConvo() {
+    if (_convoManager) return _convoManager;
+    try {
+        const mod = await import('../conversation.js');
+        _convoManager = mod.default || mod;
+    } catch {
+        _convoManager = { getInGameAgents: () => [], inConversation: () => false };
+    }
+    return _convoManager;
+}
 
 export function getFullState(agent) {
     const bot = agent.bot;
+    // Use cached world if available, otherwise fallback
+    const world = _world || {
+        getPosition: (b) => b.entity.position,
+        getBiomeName: () => 'unknown',
+        getNearbyPlayerNames: () => [],
+        getInventoryCounts: (b) => {
+            const inv = {};
+            for (const slot of b.inventory.slots || []) if (slot?.name) inv[slot.name] = (inv[slot.name]||0)+slot.count;
+            return inv;
+        },
+        getNearbyEntityTypes: () => [],
+        getBlockAtPosition: (b, x=0,y=0,z=0) => {
+            try { return b.blockAt(b.entity.position.offset(x,y,z)) || {name:'air'}; } catch { return {name:'air'}; }
+        },
+        getFirstBlockAboveHead: () => 'none',
+    };
+    const convoManager = _convoManager || { getInGameAgents: () => [], inConversation: () => false, activeConversation: null };
 
-    const pos = getPosition(bot);
+    // Trigger async loads for next call
+    void loadWorld();
+    void loadConvo();
+
+    const pos = world.getPosition(bot);
     const position = {
         x: Number(pos.x.toFixed(2)),
         y: Number(pos.y.toFixed(2)),
@@ -27,12 +80,14 @@ export function getFullState(agent) {
     if (bot.time.timeOfDay < 6000) timeLabel = 'Morning';
     else if (bot.time.timeOfDay < 12000) timeLabel = 'Afternoon';
 
-    const below = getBlockAtPosition(bot, 0, -1, 0).name;
-    const legs = getBlockAtPosition(bot, 0, 0, 0).name;
-    const head = getBlockAtPosition(bot, 0, 1, 0).name;
+    const below = world.getBlockAtPosition(bot, 0, -1, 0).name;
+    const legs = world.getBlockAtPosition(bot, 0, 0, 0).name;
+    const head = world.getBlockAtPosition(bot, 0, 1, 0).name;
 
-    let players = getNearbyPlayerNames(bot);
-    let bots = convoManager.getInGameAgents().filter(b => b !== agent.name);
+    let players = [];
+    try { players = world.getNearbyPlayerNames(bot); } catch {}
+    let bots = [];
+    try { bots = convoManager.getInGameAgents().filter(b => b !== agent.name); } catch {}
     players = players.filter(p => !bots.includes(p));
 
     const helmet = bot.inventory.slots[5];
@@ -40,21 +95,23 @@ export function getFullState(agent) {
     const leggings = bot.inventory.slots[7];
     const boots = bot.inventory.slots[8];
 
-    // Richer activity than a bare "Idle": a bot counts as idle (no action executing) even while
-    // chatting, deciding its next move, or stopped. Surface those so the dashboard is meaningful.
     let activity;
-    if (!agent.isIdle()) {
-        activity = { current: agent.actions.currentActionLabel || 'Acting', kind: 'acting' };
-    } else if (convoManager.inConversation()) {
-        const who = convoManager.activeConversation?.name;
-        activity = { current: who ? `Chatting with ${who}` : 'Chatting', kind: 'chatting' };
-    } else if (agent.self_prompter.isStopped()) {
-        activity = { current: 'Stopped', kind: 'stopped' };   // self-prompter OFF: won't act on its own
-    } else if (agent.self_prompter.isPaused()) {
-        activity = { current: 'Chatting', kind: 'chatting' };
-    } else if (agent.self_prompter.isActive()) {
-        activity = { current: 'Thinking', kind: 'thinking' }; // self-prompting between actions
-    } else {
+    try {
+        if (!agent.isIdle()) {
+            activity = { current: agent.actions.currentActionLabel || 'Acting', kind: 'acting' };
+        } else if (convoManager.inConversation && convoManager.inConversation()) {
+            const who = convoManager.activeConversation?.name;
+            activity = { current: who ? `Chatting with ${who}` : 'Chatting', kind: 'chatting' };
+        } else if (agent.self_prompter.isStopped()) {
+            activity = { current: 'Stopped', kind: 'stopped' };
+        } else if (agent.self_prompter.isPaused()) {
+            activity = { current: 'Chatting', kind: 'chatting' };
+        } else if (agent.self_prompter.isActive()) {
+            activity = { current: 'Thinking', kind: 'thinking' };
+        } else {
+            activity = { current: 'Idle', kind: 'idle' };
+        }
+    } catch {
         activity = { current: 'Idle', kind: 'idle' };
     }
 
@@ -66,7 +123,7 @@ export function getFullState(agent) {
             gamemode: bot.game.gameMode,
             health: Math.round(bot.health),
             hunger: Math.round(bot.food),
-            biome: getBiomeName(bot),
+            biome: world.getBiomeName(bot),
             weather,
             timeOfDay: bot.time.timeOfDay,
             timeLabel
@@ -80,10 +137,10 @@ export function getFullState(agent) {
             below,
             legs,
             head,
-            firstBlockAboveHead: getFirstBlockAboveHead(bot, null, 32)
+            firstBlockAboveHead: world.getFirstBlockAboveHead(bot, null, 32)
         },
         inventory: {
-            counts: getInventoryCounts(bot),
+            counts: world.getInventoryCounts(bot),
             stacksUsed: bot.inventory.items().length,
             totalSlots: bot.inventory.slots.length,
             equipment: {
@@ -97,7 +154,7 @@ export function getFullState(agent) {
         nearby: {
             humanPlayers: players,
             botPlayers: bots,
-            entityTypes: getNearbyEntityTypes(bot).filter(t => t !== 'player' && t !== 'item'),
+            entityTypes: world.getNearbyEntityTypes(bot).filter(t => t !== 'player' && t !== 'item'),
         },
         modes: {
             summary: bot.modes.getMiniDocs()

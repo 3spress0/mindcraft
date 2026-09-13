@@ -38,6 +38,7 @@ export const RECOVERY_REASON = {
     SEARCH_EXHAUSTED: 'search_exhausted',
     DANGER_PERSISTS: 'danger_persists',
     REPLANS_EXHAUSTED: 'replans_exhausted',
+    CONSTRUCTION_DAMAGED: 'construction_damaged',
 };
 
 const PERMISSION_RE = /\b(permission|not allowed|need op|operator|whitelist|protected|claimed land|cannot build here|not permitted)\b/i;
@@ -157,6 +158,21 @@ export function decideRecoveryContext({
         return budgetRetry(dec(action, RECOVERY_REASON.SEARCHING_TARGET,
             [`no known location of ${ctx?.target?.name || 'the target'} — explore to find it`]),
         retriesLeft, replanCount, maxReplans, { exhausted: RECOVERY_ACTION.REPLAN });
+    }
+
+    // 5b) Construction damaged: snapshot mismatch -> repair/replan
+    if (failureClass === FAILURE.CONSTRUCTION_DAMAGED) {
+        evidence.push(critique?.reasoning || 'expected structure does not match observed world');
+        const preferred = policyAction(policy, FAILURE.CONSTRUCTION_DAMAGED);
+        // For construction damage we want to replan to include repair steps.
+        if (replanCount >= maxReplans) {
+            return dec(RECOVERY_ACTION.HUMAN, RECOVERY_REASON.REPLANS_EXHAUSTED,
+                [`${maxReplans} plan revisions used`, ...evidence]);
+        }
+        if (RETRY_FAMILY.has(preferred) && retriesLeft) {
+            return dec(preferred, RECOVERY_REASON.CONSTRUCTION_DAMAGED, evidence);
+        }
+        return dec(RECOVERY_ACTION.REPLAN, RECOVERY_REASON.CONSTRUCTION_DAMAGED, evidence);
     }
 
     // 6) Wrong approach / anything else: replan, or honor the profile default.

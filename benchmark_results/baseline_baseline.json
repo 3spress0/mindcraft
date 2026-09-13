@@ -1,0 +1,566 @@
+{
+  "name": "baseline",
+  "createdAt": 1789302687690,
+  "runs": [
+    {
+      "runId": "run_mtzsmdpw_gjeaf8",
+      "scenario": "wheat_farm_benchmark",
+      "plannerModel": "deterministic-baseline",
+      "seed": 261,
+      "startedAt": 1789302687476,
+      "endedAt": 1789302687549,
+      "execution_time": 73,
+      "completion": true,
+      "completionPct": 100,
+      "total_steps": 8,
+      "successful_steps": 8,
+      "failed_steps": 2,
+      "retries": 1,
+      "replans": 1,
+      "recovery_actions": {
+        "navigate": 1,
+        "replan": 1
+      },
+      "recovery_reasons": {
+        "target_depleted": 1,
+        "construction_damaged": 1
+      },
+      "interruptions": 1,
+      "resumes": 1,
+      "deaths": 0,
+      "resource_waste": 0,
+      "LLM_calls": 2,
+      "LLM_failures": 0,
+      "recovery_quality": {
+        "expected_total": 4,
+        "expected_satisfied": 4,
+        "correct_action_rate": 1,
+        "recovery_success_rate": 1,
+        "avg_attempts_per_failure": 1.1,
+        "waste_efficiency": 1,
+        "score": 100,
+        "checks": [
+          {
+            "eventId": "shortage_seeds",
+            "expectedAction": "navigate",
+            "expectedReason": "target_depleted",
+            "satisfied": true,
+            "description": "Should gather missing seeds via navigate/search to alternative deposit"
+          },
+          {
+            "eventId": "depleted_deposit",
+            "expectedAction": "navigate",
+            "expectedReason": "target_depleted",
+            "satisfied": true,
+            "description": "Should navigate to alternative deposit"
+          },
+          {
+            "eventId": "interruption_gather",
+            "expectedAction": "resume",
+            "expectedReason": null,
+            "satisfied": true,
+            "description": "Should resume after interruption"
+          },
+          {
+            "eventId": "damage_farm",
+            "expectedAction": "replan",
+            "expectedReason": "construction_damaged",
+            "satisfied": true,
+            "description": "Observation detects mismatch → recovery selects repair/replan"
+          }
+        ]
+      },
+      "score": {
+        "total": 95,
+        "completion": 40,
+        "efficiency": 20,
+        "recovery": 25,
+        "robustness": 10,
+        "breakdown": {
+          "completionPct": 100,
+          "retries": 1,
+          "replans": 1,
+          "waste": 0,
+          "llmCalls": 2,
+          "recoveryQuality": 100,
+          "deaths": 0,
+          "interruptionsHandled": true
+        }
+      },
+      "replay_log_id": "run_mtzsmdpw_gjeaf8"
+    },
+    {
+      "runId": "run_mtzsmds0_rmuq63",
+      "scenario": "iron_mine_benchmark",
+      "plannerModel": "deterministic-baseline",
+      "seed": 501,
+      "startedAt": 1789302687552,
+      "endedAt": 1789302687608,
+      "execution_time": 56,
+      "completion": true,
+      "completionPct": 100,
+      "total_steps": 5,
+      "successful_steps": 5,
+      "failed_steps": 3,
+      "retries": 2,
+      "replans": 1,
+      "recovery_actions": {
+        "gather": 1,
+        "navigate": 1,
+        "replan": 1
+      },
+      "recovery_reasons": {
+        "deposit_unknown": 1,
+        "known_target_elsewhere": 1,
+        "construction_damaged": 1
+      },
+      "interruptions": 1,
+      "resumes": 1,
+      "deaths": 0,
+      "resource_waste": 0,
+      "LLM_calls": 2,
+      "LLM_failures": 0,
+      "recovery_quality": {
+        "expected_total": 5,
+        "expected_satisfied": 5,
+        "correct_action_rate": 1,
+        "recovery_success_rate": 1,
+        "avg_attempts_per_failure": 1.25,
+        "waste_efficiency": 1,
+        "score": 99,
+        "checks": [
+          {
+            "eventId": "missing_pickaxe",
+            "expectedAction": "craft",
+            "expectedReason": "materials_missing",
+            "satisfied": 1,
+            "description": ""
+          },
+          {
+            "eventId": "depleted_vein",
+            "expectedAction": "navigate",
+            "expectedReason": "target_depleted",
+            "satisfied": 1,
+            "description": ""
+          },
+          {
+            "eventId": "lava_threat",
+            "expectedAction": "retreat",
+            "expectedReason": "danger",
+            "satisfied": true,
+            "description": ""
+          },
+          {
+            "eventId": "interruption_mining",
+            "expectedAction": "resume",
+            "expectedReason": null,
+            "satisfied": true,
+            "description": ""
+          },
+          {
+            "eventId": "damage_shaft",
+            "expectedAction": "replan",
+            "expectedReason": "construction_damaged",
+            "satisfied": true,
+            "description": ""
+          }
+        ]
+      },
+      "score": {
+        "total": 93,
+        "completion": 40,
+        "efficiency": 18,
+        "recovery": 25,
+        "robustness": 10,
+        "breakdown": {
+          "completionPct": 100,
+          "retries": 2,
+          "replans": 1,
+          "waste": 0,
+          "llmCalls": 2,
+          "recoveryQuality": 99,
+          "deaths": 0,
+          "interruptionsHandled": true
+        }
+      },
+      "replay_log_id": "run_mtzsmds0_rmuq63"
+    },
+    {
+      "runId": "run_mtzsmdtm_vf1fjm",
+      "scenario": "shelter_build_benchmark",
+      "plannerModel": "deterministic-baseline",
+      "seed": 403,
+      "startedAt": 1789302687610,
+      "endedAt": 1789302687631,
+      "execution_time": 21,
+      "completion": true,
+      "completionPct": 100,
+      "total_steps": 5,
+      "successful_steps": 5,
+      "failed_steps": 1,
+      "retries": 0,
+      "replans": 1,
+      "recovery_actions": {
+        "replan": 1
+      },
+      "recovery_reasons": {
+        "construction_damaged": 1
+      },
+      "interruptions": 1,
+      "resumes": 1,
+      "deaths": 0,
+      "resource_waste": 0,
+      "LLM_calls": 2,
+      "LLM_failures": 0,
+      "recovery_quality": {
+        "expected_total": 4,
+        "expected_satisfied": 4,
+        "correct_action_rate": 1,
+        "recovery_success_rate": 1,
+        "avg_attempts_per_failure": 1,
+        "waste_efficiency": 1,
+        "score": 100,
+        "checks": [
+          {
+            "eventId": "perm_claim",
+            "expectedAction": "human",
+            "expectedReason": "permission_required",
+            "satisfied": true,
+            "description": "Permission wall should pause for human or trigger replan via damage"
+          },
+          {
+            "eventId": "creeper_damage",
+            "expectedAction": "replan",
+            "expectedReason": "construction_damaged",
+            "satisfied": true,
+            "description": ""
+          },
+          {
+            "eventId": "night_threat",
+            "expectedAction": "retreat",
+            "expectedReason": "danger_nearby",
+            "satisfied": true,
+            "description": "Should retreat from zombie threat"
+          },
+          {
+            "eventId": "interruption_night",
+            "expectedAction": "resume",
+            "expectedReason": null,
+            "satisfied": true,
+            "description": ""
+          }
+        ]
+      },
+      "score": {
+        "total": 97,
+        "completion": 40,
+        "efficiency": 22,
+        "recovery": 25,
+        "robustness": 10,
+        "breakdown": {
+          "completionPct": 100,
+          "retries": 0,
+          "replans": 1,
+          "waste": 0,
+          "llmCalls": 2,
+          "recoveryQuality": 100,
+          "deaths": 0,
+          "interruptionsHandled": true
+        }
+      },
+      "replay_log_id": "run_mtzsmdtm_vf1fjm"
+    },
+    {
+      "runId": "run_mtzsmdu8_bckgtk",
+      "scenario": "tree_farm_benchmark",
+      "plannerModel": "deterministic-baseline",
+      "seed": 661,
+      "startedAt": 1789302687632,
+      "endedAt": 1789302687647,
+      "execution_time": 15,
+      "completion": true,
+      "completionPct": 100,
+      "total_steps": 7,
+      "successful_steps": 7,
+      "failed_steps": 2,
+      "retries": 1,
+      "replans": 1,
+      "recovery_actions": {
+        "navigate": 1,
+        "replan": 1
+      },
+      "recovery_reasons": {
+        "target_depleted": 1,
+        "construction_damaged": 1
+      },
+      "interruptions": 1,
+      "resumes": 1,
+      "deaths": 0,
+      "resource_waste": 0,
+      "LLM_calls": 2,
+      "LLM_failures": 0,
+      "recovery_quality": {
+        "expected_total": 4,
+        "expected_satisfied": 4,
+        "correct_action_rate": 1,
+        "recovery_success_rate": 1,
+        "avg_attempts_per_failure": 1.1111111111111112,
+        "waste_efficiency": 1,
+        "score": 99,
+        "checks": [
+          {
+            "eventId": "sapling_shortage",
+            "expectedAction": "navigate",
+            "expectedReason": "target_depleted",
+            "satisfied": true,
+            "description": ""
+          },
+          {
+            "eventId": "depleted_sapling",
+            "expectedAction": "navigate",
+            "expectedReason": "target_depleted",
+            "satisfied": true,
+            "description": ""
+          },
+          {
+            "eventId": "interruption_growth",
+            "expectedAction": "resume",
+            "expectedReason": null,
+            "satisfied": true,
+            "description": ""
+          },
+          {
+            "eventId": "trample_damage",
+            "expectedAction": "replan",
+            "expectedReason": "construction_damaged",
+            "satisfied": true,
+            "description": ""
+          }
+        ]
+      },
+      "score": {
+        "total": 95,
+        "completion": 40,
+        "efficiency": 20,
+        "recovery": 25,
+        "robustness": 10,
+        "breakdown": {
+          "completionPct": 100,
+          "retries": 1,
+          "replans": 1,
+          "waste": 0,
+          "llmCalls": 2,
+          "recoveryQuality": 99,
+          "deaths": 0,
+          "interruptionsHandled": true
+        }
+      },
+      "replay_log_id": "run_mtzsmdu8_bckgtk"
+    },
+    {
+      "runId": "run_mtzsmduo_5wtt6u",
+      "scenario": "village_outpost_benchmark",
+      "plannerModel": "deterministic-baseline",
+      "seed": 175,
+      "startedAt": 1789302687648,
+      "endedAt": 1789302687671,
+      "execution_time": 23,
+      "completion": true,
+      "completionPct": 100,
+      "total_steps": 7,
+      "successful_steps": 7,
+      "failed_steps": 2,
+      "retries": 2,
+      "replans": 0,
+      "recovery_actions": {
+        "gather": 1,
+        "navigate": 1
+      },
+      "recovery_reasons": {
+        "deposit_unknown": 1,
+        "known_target_elsewhere": 1
+      },
+      "interruptions": 1,
+      "resumes": 1,
+      "deaths": 0,
+      "resource_waste": 0,
+      "LLM_calls": 0,
+      "LLM_failures": 0,
+      "recovery_quality": {
+        "expected_total": 5,
+        "expected_satisfied": 5,
+        "correct_action_rate": 1,
+        "recovery_success_rate": 1,
+        "avg_attempts_per_failure": 1.2222222222222223,
+        "waste_efficiency": 1,
+        "score": 99,
+        "checks": [
+          {
+            "eventId": "emerald_shortage",
+            "expectedAction": "gather",
+            "expectedReason": "materials_missing",
+            "satisfied": true,
+            "description": "Should gather emeralds via alternative"
+          },
+          {
+            "eventId": "village_permission",
+            "expectedAction": "human",
+            "expectedReason": "permission_required",
+            "satisfied": true,
+            "description": "Permission wall should trigger human pause or event"
+          },
+          {
+            "eventId": "raid_threat",
+            "expectedAction": "retreat",
+            "expectedReason": "danger_nearby",
+            "satisfied": true,
+            "description": "Should retreat from pillager"
+          },
+          {
+            "eventId": "interruption_trade",
+            "expectedAction": "resume",
+            "expectedReason": null,
+            "satisfied": true,
+            "description": "Should resume after villager restock"
+          },
+          {
+            "eventId": "pillager_damage",
+            "expectedAction": "replan",
+            "expectedReason": "construction_damaged",
+            "satisfied": true,
+            "description": ""
+          }
+        ]
+      },
+      "score": {
+        "total": 96,
+        "completion": 40,
+        "efficiency": 21,
+        "recovery": 25,
+        "robustness": 10,
+        "breakdown": {
+          "completionPct": 100,
+          "retries": 2,
+          "replans": 0,
+          "waste": 0,
+          "llmCalls": 0,
+          "recoveryQuality": 99,
+          "deaths": 0,
+          "interruptionsHandled": true
+        }
+      },
+      "replay_log_id": "run_mtzsmduo_5wtt6u"
+    },
+    {
+      "runId": "run_mtzsmdvc_5xg5zu",
+      "scenario": "nether_expedition_benchmark",
+      "plannerModel": "deterministic-baseline",
+      "seed": 1078,
+      "startedAt": 1789302687672,
+      "endedAt": 1789302687687,
+      "execution_time": 15,
+      "completion": true,
+      "completionPct": 100,
+      "total_steps": 8,
+      "successful_steps": 8,
+      "failed_steps": 3,
+      "retries": 3,
+      "replans": 0,
+      "recovery_actions": {
+        "navigate": 3
+      },
+      "recovery_reasons": {
+        "deposit_known": 1,
+        "known_target_elsewhere": 1,
+        "target_depleted": 1
+      },
+      "interruptions": 1,
+      "resumes": 1,
+      "deaths": 0,
+      "resource_waste": 0,
+      "LLM_calls": 0,
+      "LLM_failures": 0,
+      "recovery_quality": {
+        "expected_total": 6,
+        "expected_satisfied": 6,
+        "correct_action_rate": 1,
+        "recovery_success_rate": 1,
+        "avg_attempts_per_failure": 1.2727272727272727,
+        "waste_efficiency": 1,
+        "score": 99,
+        "checks": [
+          {
+            "eventId": "obsidian_shortage",
+            "expectedAction": "gather",
+            "expectedReason": "materials_missing",
+            "satisfied": true,
+            "description": "Should gather obsidian"
+          },
+          {
+            "eventId": "portal_permission",
+            "expectedAction": "human",
+            "expectedReason": "permission_required",
+            "satisfied": true,
+            "description": ""
+          },
+          {
+            "eventId": "ghast_threat",
+            "expectedAction": "retreat",
+            "expectedReason": "danger_nearby",
+            "satisfied": true,
+            "description": "Should retreat from ghast"
+          },
+          {
+            "eventId": "depleted_wart",
+            "expectedAction": "navigate",
+            "expectedReason": "alternate_deposit_known",
+            "satisfied": 3,
+            "description": ""
+          },
+          {
+            "eventId": "interruption_nether",
+            "expectedAction": "resume",
+            "expectedReason": null,
+            "satisfied": true,
+            "description": ""
+          },
+          {
+            "eventId": "portal_damage",
+            "expectedAction": "replan",
+            "expectedReason": "construction_damaged",
+            "satisfied": true,
+            "description": ""
+          }
+        ]
+      },
+      "score": {
+        "total": 94,
+        "completion": 40,
+        "efficiency": 19,
+        "recovery": 25,
+        "robustness": 10,
+        "breakdown": {
+          "completionPct": 100,
+          "retries": 3,
+          "replans": 0,
+          "waste": 0,
+          "llmCalls": 0,
+          "recoveryQuality": 99,
+          "deaths": 0,
+          "interruptionsHandled": true
+        }
+      },
+      "replay_log_id": "run_mtzsmdvc_5xg5zu"
+    }
+  ],
+  "avgScore": 95,
+  "avgCompletion": 1,
+  "scenarios": [
+    "wheat_farm_benchmark",
+    "iron_mine_benchmark",
+    "shelter_build_benchmark",
+    "tree_farm_benchmark",
+    "village_outpost_benchmark",
+    "nether_expedition_benchmark"
+  ]
+}
