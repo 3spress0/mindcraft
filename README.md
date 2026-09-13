@@ -135,6 +135,60 @@ The `initial_inventory` is what the bot will have at the start of the episode, `
 
 If you want more optimization and automatic launching of the minecraft world, you will need to follow the instructions in [Minecollab Instructions](minecollab.md#installation)
 
+## Planned projects (planner → executor → critic)
+
+For long-horizon goals ("build an automated iron farm"), the bot can run a closed planning loop instead of a single endless self-prompt:
+
+1. The **planner** turns the goal into an ordered, dependency-aware plan of concrete steps, each with a machine-verifiable expected outcome (inventory gain, coordinates reached, block/entity nearby, health level, or a freeform check).
+2. The **executor** carries out one step at a time using the normal command/native-tool machinery.
+3. The **observer** snapshots the world before/after and computes the state diff.
+4. The **critic** verifies the step (deterministically where possible, via the model otherwise) and classifies failures.
+5. The **replanner** retries transient failures, revises the plan when an approach is wrong, pauses for human help on missing resources/permissions, and aborts impossible goals.
+
+State is saved to `bots/<name>/active_project.json` after every step, so restarts resume mid-project (tunable via the `planning` block in `settings.js`).
+
+- `!plan <goal>` — create a phased plan and start executing it
+- `!planStatus` — show the phase/task tree, per-step statuses, progress, and the last contextual recovery decision with its reason and evidence
+- `!planStop` — pause the project (resumable)
+- `!planResume` — continue a paused/interrupted project
+- `!planReplan` — discard the remaining steps and ask the planner for a new approach
+
+Plans are hierarchical: the planner emits 2–6 **phases** (e.g. Preparation → Construction → Verification), steps are tagged to a phase and execute earliest-phase-first, and a step can itself be a group whose **sub-tasks** are the executable leaves (the group rolls up automatically when its leaves verify). Flat plans remain fully supported.
+
+### Context-aware recovery policies
+
+When a step fails, recovery is no longer a generic retry: the runner combines the failure class, the chosen policy profile, and **WorldModel facts** (depleted deposits, alternative sources, last-seen targets, active threats, known shelters, health) into an explicit decision with a reason code and evidence, e.g.
+
+```
+Recovery [default:navigate] Obtain 32 iron: target_depleted — nearest known iron_ore deposit is depleted; usable iron_ore deposit 180m away at (180, 64, -20)
+```
+
+Actions are `retry`, `repath`, `navigate` (to a known deposit/target with coordinates injected into the next executor turn), `search`, `gather`, `retreat` (to a known base or away from the nearest threat), `replan`, `human` (pause for help), or `abort` — all bounded by the per-step attempt and replan budgets, and all shown by `!planStatus`. Profiles (config `planning.recovery_profile`):
+
+- `default` — repath obstructions, gather missing materials once, retreat from danger, replan wrong approaches
+- `explorer` — search aggressively for unknown targets, simple retries on glitches
+- `builder` — prefer routing to known deposits/stations, escalate material problems sooner
+- `survival` — safety-first retreats and earlier replanning
+
+Profiles can be overridden per failure class via `planning.recovery_policies` in `settings.js`; the built-in table lives in `src/agent/planning/policies.js` and the world-aware decision logic in `src/agent/planning/recovery.js`.
+
+### Persistent world model and verified state transitions
+
+The planning loop is backed by a persistent **world model** (`bots/<name>/world_model.json`): the observation layer continuously turns Minecraft events (entity spawns/despawns, movement, damage, death) and *verified plan-step results* into timestamped, confidence-rated facts — locations (villages, bases, death points), resource deposits, structures, mobs/NPCs, threats, and crafting recipes the bot has actually performed. Volatile facts (threats, dropped items) decay and expire; durable facts survive restarts. The planner receives them as "KNOWN WORLD FACTS", so it routes to already-discovered villages and deposits, avoids depleted sources and known threats, and stops rediscovering the same things.
+
+Steps can also declare an **exact expected state transition** (the planner emits these for crafting/smelting steps):
+
+```json
+"expected_delta": { "inventory.hopper": 1, "inventory.iron_ingot": -5 }
+```
+
+If the executor reports success but the world did not change as declared, the critic deterministically fails the step (positive numbers = gain at least N, negative = exactly N consumed, optional tolerance) — an LLM claiming "crafted" without the inventory change is caught and retried/replanned instead of being trusted.
+
+- `!world` — inspect the model: self state, active project, locations, structures, deposits, mobs, fresh threats, recipes
+- `!where <thing>` — nearest known fact (`!where village`, `!where iron`, `!where zombie`) or a category list (`!where resources`)
+
+For a lighter-weight "just keep working on this" loop, `!goal <prompt>` still drives plain continuous self-prompting without plans or verification.
+
 ## Docker Container
 
 If you intend to `allow_insecure_coding`, it is a good idea to run the app in a docker container to reduce risks of running unknown code. This is strongly recommended before connecting to remote servers, although still does not guarantee complete safety.

@@ -11,6 +11,10 @@ import { ActionManager } from './action_manager.js';
 import { NPCContoller } from './npc/controller.js';
 import { MemoryBank } from './memory_bank.js';
 import { SelfPrompter } from './self_prompter.js';
+import { PlanRunner } from './planning/runner.js';
+import { WorldModel } from './world_model/world_model.js';
+import { WorldModelStore } from './world_model/store.js';
+import { ObservationCollector } from './observation/collector.js';
 import { ReactMessageManager } from './react_message_manager.js';
 import convoManager from './conversation.js';
 import { addBrowserViewer } from './vision/browser_viewer.js';
@@ -63,6 +67,10 @@ export class Agent {
         this.npc = new NPCContoller(this);
         this.memory_bank = new MemoryBank();
         this.self_prompter = new SelfPrompter(this);
+        this.world_model = new WorldModel();
+        this.world_store = new WorldModelStore(this.name);
+        this.observation_collector = null;
+        this.plan_runner = new PlanRunner(this);
         convoManager.initAgent(this);
         await this.prompter.initPromptResources();
 
@@ -164,6 +172,20 @@ export class Agent {
     }
 
     async _setupEventHandlers(save_data, init_message) {
+        // Persistent world model: hydrate from disk, then attach the live
+        // Minecraft-event -> fact collector before the planner resumes (its
+        // replans use the model for known locations/resources/threats).
+        if (settings.world_model?.enabled !== false) {
+            try {
+                const stored = this.world_store.load();
+                if (stored) this.world_model = stored;
+                this.observation_collector = new ObservationCollector(this, this.world_model, { store: settings.world_model?.persist === false ? null : this.world_store });
+                this.observation_collector.attach(this.bot);
+            } catch (err) {
+                console.warn('world-model setup failed:', err.message);
+            }
+        }
+
         const ignore_messages = [
             "Set own game mode to",
             "Set the time to",
@@ -216,6 +238,8 @@ export class Agent {
         if (save_data?.self_prompt) {
             await this.self_prompter.handleLoad(save_data.self_prompt, save_data.self_prompting_state);
         }
+        // Resume any unfinished planner project (its own file survives compaction).
+        void this.plan_runner.handleLoad();
         if (save_data?.last_sender) {
             this.last_sender = save_data.last_sender;
             if (convoManager.otherAgentInGame(this.last_sender)) {
@@ -271,6 +295,10 @@ export class Agent {
         this.shut_up = true;
         if (this.self_prompter.isActive()) {
             this.self_prompter.stop(false);
+        }
+        if (this.plan_runner?.isRunning()) {
+            // fire-and-forget; loop halts at its next interruption check
+            void this.plan_runner.stop({ pause: true, message: 'stopped by user' });
         }
         convoManager.endAllConversations();
     }
@@ -474,7 +502,7 @@ export class Agent {
             ? runOptions.interruptEpoch
             : (this.message_interrupt_epoch || 0);
         const isStaleTurn = () => interruptEpoch !== (this.message_interrupt_epoch || 0);
-        const checkInterrupt = () => isStaleTurn() || this.self_prompter.shouldInterrupt(self_prompt) || this.shut_up || convoManager.responseScheduledFor(source);
+        const checkInterrupt = () => isStaleTurn() || this.self_prompter.shouldInterrupt(self_prompt) || this.shut_up || convoManager.responseScheduledFor(source) || this.plan_runner?.shouldInterrupt?.();
 
         if (checkInterrupt()) {
             console.log(`${this.name} skipped stale message from ${source} before starting a ReAct turn.`);
@@ -749,6 +777,7 @@ export class Agent {
         // Use connection handler for runtime disconnects
         this.bot.on('end', (reason) => {
             if (!this._disconnectHandled) {
+                try { this.observation_collector?.saveNow(); } catch { /* shutdown */ }
                 const { msg } = handleDisconnection(this.name, reason);
                 this.cleanKill(msg);
             }
@@ -811,6 +840,7 @@ export class Agent {
     async update(delta) {
         await this.bot.modes.update();
         this.self_prompter.update(delta);
+        this.observation_collector?.tick?.();
         await this.checkTaskDone();
     }
 

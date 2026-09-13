@@ -48,6 +48,84 @@ const settings = {
     "spawn_timeout": 30, // num seconds allowed for the bot to spawn before throwing error. Increase when spawning takes a while.
     "block_place_delay": 0, // delay between placing blocks (ms) if using newAction. helps avoid bot being kicked by anti-cheat mechanisms on servers.
 
+    // Folder (relative to project root) where the bot looks for build files:
+    // Litematica .litematic, Sponge/WorldEdit .schem (Baritone's format too),
+    // vanilla structure .nbt, and mindcraft blueprint .json. Browse with
+    // !listBuilds, quote materials with !buildMaterials, build with !buildSchematic.
+    "schematic_library": "schematics",
+
+    // Planner -> executor -> observer -> critic -> replanner loop (!plan).
+    // A long-horizon goal is turned into an ordered, verifiable step plan; each
+    // step is executed via the normal ReAct/tool machinery, the world is
+    // observed before/after, and deterministic + model critics decide whether
+    // the step really succeeded and whether to retry, replan, or ask for help.
+    "planning": {
+        "planner_attempts": 2,     // model JSON retries before falling back to a single-step plan
+        "max_step_attempts": 2,    // retries of the same step before the planner revises the plan
+        "max_replans": 3,         // plan revisions before escalating to a human
+        "max_executions": 60,     // safety cap on total step executions per project
+        "executor_max_responses": 6, // ReAct turns per step (tool/command rounds)
+        "step_cooldown_ms": 1500, // pause between steps
+        "freeform_critic": true,  // use the model to judge non-deterministic expectations
+        "autoresume": true,       // resume an unfinished project after restart
+        // Recovery policy profile: default, explorer (search aggressively),
+        // builder (route to known deposits, escalate material issues), or
+        // survival (safety-first retreats). Profiles live in
+        // src/agent/planning/policies.js and consume WorldModel facts
+        // (depleted deposits, alternative sources, nearby threats, retreats).
+        "recovery_profile": "default",
+        "recovery_policies": null, // optional {profile: {failureClass: action}} overrides
+        "danger_health_threshold": 6, // health <= this with threats nearby -> retreat/human
+        "threat_radius": 16,       // world-model threats within this range count as danger
+    },
+
+    // Persistent world model (bots/<name>/world_model.json). The observer layer
+    // records timestamped, confidence-rated facts (locations, mobs, resource
+    // deposits, structures, threats, proven recipes) from live Minecraft events
+    // and from verified plan steps. The planner reads them as "KNOWN WORLD
+    // FACTS" so it stops rediscovering villages/resources and routes around
+    // threats and depleted sources. Inspect with !world [category|query].
+    "world_model": {
+        "enabled": true,           // master switch for the event collector
+        "persist": true,           // save facts to disk (survives restarts)
+        "entity_radius": 48,       // only record entities within this many blocks
+        "player_refresh_ms": 2000, // how often position/health/hunger are snapshotted
+        "scan_interval_ms": 5000,  // full entity sweep + confidence decay interval
+        "save_interval_ms": 15000, // throttle for automatic saves
+        "threat_ttl_ms": 120000,   // unseen hostile mobs expire after 2 minutes
+        "entity_ttl_ms": 600000,   // unseen passive mobs/npcs kept for 10 minutes
+        "item_ttl_ms": 30000,      // dropped item facts expire after 30 seconds
+        "confidence_floor": 0.15,  // volatile facts decaying below this are pruned
+        "volatile_half_life_ms": 120000, // confidence halves every 2 minutes unseen
+        "village_radius": 48,      // block grid size for merging villager sightings
+        "summary_max_lines": 40,   // facts injected into planner prompts
+    },
+
+    // Humanlike locomotion layered on top of mineflayer-pathfinder (the mineflayer
+    // equivalent of Baritone). Removes robotic movement tells: instant head snaps
+    // with a perfectly level stare, nonstop sprinting, zero reaction time, and a
+    // frozen stance while idle. Digging, building, combat and scripted lookAt calls
+    // are never affected.
+    "humanlike": {
+        "enabled": true,          // master switch; can also be toggled at runtime via bot.humanizer.setEnabled()
+        "smooth_gaze": true,      // ease/rate-limit head turns, add micro-jitter and natural vertical gaze wander
+        "max_turn_rate_deg": 17,  // max yaw change per game tick (20 ticks/s) while traveling
+        "gaze_turn_gain": 0.42,   // how quickly the head eases toward the travel heading (0..1)
+        "gaze_jitter_deg": 0.7,   // random gaze noise per tick, in degrees
+        "gaze_pitch_var": 0.13,   // radians of vertical gaze wander while walking
+        "varied_pace": true,      // mix walking and sprinting instead of sprinting everywhere
+        "sprint_ratio": 0.72,     // approx share of travel time spent sprinting (0..1)
+        "reaction_delay_ms": 220, // max startup reaction delay, jittered between 0 and this
+        "hesitations": true,      // brief 50-150ms "thinking" pauses mid-route (flat ground only)
+        "hesitation_min_s": 6,    // min seconds between hesitation pauses
+        "hesitation_max_s": 20,   // max seconds between hesitation pauses
+        "idle_glances": true,     // occasionally look around while standing still
+        "idle_min_s": 3,          // min seconds between idle glances
+        "idle_max_s": 10,         // max seconds between idle glances
+        "idle_arm_swing": false,  // occasionally swing the arm while idle (off by default)
+        "external_look_hold_ms": 2500, // don't idle-glance for this long after a scripted look/lookAt
+    },
+
 
     "log_all_prompts": false, // log ALL prompts to file
     "show_chat_history": true, // stream and persist Runtime chat/tool events for the web UI
