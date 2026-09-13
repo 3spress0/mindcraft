@@ -1,15 +1,15 @@
 {
   "name": "baseline",
-  "createdAt": 1789302687690,
+  "createdAt": 1789302809796,
   "runs": [
     {
-      "runId": "run_mtzsmdpw_gjeaf8",
+      "runId": "run_mtzsozyj_izpx2b",
       "scenario": "wheat_farm_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 261,
-      "startedAt": 1789302687476,
-      "endedAt": 1789302687549,
-      "execution_time": 73,
+      "seed": 487,
+      "startedAt": 1789302809612,
+      "endedAt": 1789302809683,
+      "execution_time": 71,
       "completion": true,
       "completionPct": 100,
       "total_steps": 8,
@@ -87,16 +87,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsmdpw_gjeaf8"
+      "replay_log_id": "run_mtzsozyj_izpx2b"
     },
     {
-      "runId": "run_mtzsmds0_rmuq63",
+      "runId": "run_mtzsp00m_y9j6ak",
       "scenario": "iron_mine_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 501,
-      "startedAt": 1789302687552,
-      "endedAt": 1789302687608,
-      "execution_time": 56,
+      "seed": 560,
+      "startedAt": 1789302809686,
+      "endedAt": 1789302809724,
+      "execution_time": 38,
       "completion": true,
       "completionPct": 100,
       "total_steps": 5,
@@ -183,16 +183,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsmds0_rmuq63"
+      "replay_log_id": "run_mtzsp00m_y9j6ak"
     },
     {
-      "runId": "run_mtzsmdtm_vf1fjm",
+      "runId": "run_mtzsp01p_iz5hpy",
       "scenario": "shelter_build_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 403,
-      "startedAt": 1789302687610,
-      "endedAt": 1789302687631,
-      "execution_time": 21,
+      "seed": 976,
+      "startedAt": 1789302809725,
+      "endedAt": 1789302809737,
+      "execution_time": 12,
       "completion": true,
       "completionPct": 100,
       "total_steps": 5,
@@ -268,16 +268,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsmdtm_vf1fjm"
+      "replay_log_id": "run_mtzsp01p_iz5hpy"
     },
     {
-      "runId": "run_mtzsmdu8_bckgtk",
+      "runId": "run_mtzsp022_x8l0d0",
       "scenario": "tree_farm_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 661,
-      "startedAt": 1789302687632,
-      "endedAt": 1789302687647,
-      "execution_time": 15,
+      "seed": 175,
+      "startedAt": 1789302809738,
+      "endedAt": 1789302809752,
+      "execution_time": 14,
       "completion": true,
       "completionPct": 100,
       "total_steps": 7,
@@ -355,16 +355,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsmdu8_bckgtk"
+      "replay_log_id": "run_mtzsp022_x8l0d0"
     },
     {
-      "runId": "run_mtzsmduo_5wtt6u",
+      "runId": "run_mtzsp02h_rulypm",
       "scenario": "village_outpost_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 175,
-      "startedAt": 1789302687648,
-      "endedAt": 1789302687671,
-      "execution_time": 23,
+      "seed": 1114,
+      "startedAt": 1789302809753,
+      "endedAt": 1789302809777,
+      "execution_time": 24,
       "completion": true,
       "completionPct": 100,
       "total_steps": 7,
@@ -449,16 +449,16 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsmduo_5wtt6u"
+      "replay_log_id": "run_mtzsp02h_rulypm"
     },
     {
-      "runId": "run_mtzsmdvc_5xg5zu",
+      "runId": "run_mtzsp036_0xqhba",
       "scenario": "nether_expedition_benchmark",
       "plannerModel": "deterministic-baseline",
-      "seed": 1078,
-      "startedAt": 1789302687672,
-      "endedAt": 1789302687687,
-      "execution_time": 15,
+      "seed": 883,
+      "startedAt": 1789302809778,
+      "endedAt": 1789302809792,
+      "execution_time": 14,
       "completion": true,
       "completionPct": 100,
       "total_steps": 8,
@@ -550,7 +550,7 @@
           "interruptionsHandled": true
         }
       },
-      "replay_log_id": "run_mtzsmdvc_5xg5zu"
+      "replay_log_id": "run_mtzsp036_0xqhba"
     }
   ],
   "avgScore": 95,
