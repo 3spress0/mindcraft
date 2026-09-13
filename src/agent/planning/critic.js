@@ -56,6 +56,7 @@ export const FAILURE = {
     MISSING_RESOURCES: 'missing_resources',
     IMPOSSIBLE: 'impossible',
     HUMAN: 'human',
+    CONSTRUCTION_DAMAGED: 'construction_damaged', // expected structure was damaged/destroyed
 };
 
 /**
@@ -67,6 +68,10 @@ export function classifyFailure({ stepText = '', diff = {}, resultText = '', evi
     const haystack = `${stepText}\n${resultText}\n${diff?.text || ''}\n${evidence}`.toLowerCase();
 
     if (died || diff.healthDelta <= -6) return FAILURE.DANGER;
+    if (/\b(construction damaged|structure damaged|blocks destroyed|building damaged|farm damaged|mismatched blocks|structure intact|expected \d+ blocks)\b/.test(haystack) ||
+        (/\b(damaged|destroyed|missing)\b/.test(haystack) && /\b(blocks|structure|construction|build)\b/.test(haystack) && /mismatched|expected/.test(haystack))) {
+        return FAILURE.CONSTRUCTION_DAMAGED;
+    }
     if (/\b(no permission|not allowed|operator|whitelist|need op|cannot craft|missing ingredient|out of materials|don't have|do not have)\b/.test(haystack)) {
         return FAILURE.MISSING_RESOURCES;
     }
