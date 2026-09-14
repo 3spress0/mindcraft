@@ -1,324 +1,731 @@
-<h1 align="center">🧠mindcraft⛏️</h1>
-<h1 align="center">
-  <a href="https://trendshift.io/repositories/14816" target="_blank"><img src="https://trendshift.io/api/badge/repositories/14816" alt="mindcraft-bots%2Fmindcraft | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-</h1>
-
-<p align="center">Crafting minds for Minecraft with LLMs and <a href="https://prismarinejs.github.io/mineflayer/#/">Mineflayer!</a></p>
+<h1 align="center">🧠 mindcraft ⛏️</h1>
 
 <p align="center">
-  <a href="https://github.com/mindcraft-bots/mindcraft/blob/main/FAQ.md">FAQ</a> | 
-  <a href="https://discord.gg/mp73p35dzC">Discord Support</a> | 
-  <a href="https://www.youtube.com/watch?v=gRotoL8P8D8">Video Tutorial</a> | 
-  <a href="https://kolbynottingham.com/mindcraft/">Blog Post</a> | 
-  <a href="https://mindcraft-minecollab.github.io/index.html">Paper Website</a> | 
-  <a href="https://github.com/mindcraft-bots/mindcraft/blob/main/minecollab.md">MineCollab</a>
+  An actively developed Mindcraft fork focused on reliable Minecraft autonomy, planning, recovery, world modeling, and real-LLM evaluation.
 </p>
 
-> [!Caution]
-Do not connect this bot to public servers with coding enabled. This project allows an LLM to write/execute code on your computer. The code is sandboxed, but still vulnerable to injection attacks. Code writing is disabled by default, you can enable it by setting `allow_insecure_coding` to `true` in `settings.js`. Ye be warned.
+<p align="center">
+  <a href="https://github.com/3spress0/mindcraft">GitHub</a> •
+  <a href="https://github.com/3spress0/mindcraft/issues">Issues</a> •
+  <a href="https://github.com/mindcraft-bots/mindcraft">Upstream Mindcraft</a>
+</p>
+
+> [!NOTE]
+> This repository is a fork of the original [Mindcraft](https://github.com/mindcraft-bots/mindcraft) project.
+>
+> It contains substantial additional development by `3spress0`, including hierarchical planning, execution verification, persistent world modeling, contextual recovery, schematic construction, humanlike locomotion, deterministic benchmarks, and real-LLM evaluation.
+>
+> Upstream documentation and research should be attributed to the original Mindcraft project where applicable.
+
+> [!CAUTION]
+> Mindcraft gives an LLM the ability to interact with Minecraft and, when coding is enabled, potentially write and execute code on the host system.
+>
+> Do not connect coding-enabled agents to untrusted public servers. Prompt injection and malicious game content can cause unintended behavior.
+>
+> Coding is disabled by default. Only enable `allow_insecure_coding` when you understand the risks.
 
 # Getting Started
+
 ## Requirements
 
-- [Minecraft Java Edition](https://www.minecraft.net/en-us/store/minecraft-java-bedrock-edition-pc) (up to v1.21.11, recommend v1.21.6)
-- [Node.js Installed](https://nodejs.org/) (Node v18 or v20 LTS recommended. Node v24+ may cause issues with native dependencies)
-- At least one API key from a supported API provider. See [supported APIs](#model-customization). OpenAI is the default.
+* Minecraft Java Edition compatible with the version supported by the installed Mindcraft/Mineflayer stack.
+* Node.js. LTS releases are recommended.
+* At least one supported LLM provider/API key unless using a local model.
+* A Minecraft account for online-mode servers.
 
-> [!Important]
-> If installing node on windows, ensure you check `Automatically install the necessary tools`
->
-> If you encounter `npm install` errors on macOS, see the [FAQ](FAQ.md#common-issues) for troubleshooting native module build issues
+Check the current repository configuration before selecting a Node.js version, because native dependencies may require additional build tooling on some platforms.
 
-## Install and Run
+## Installation
 
-1. Make sure you have the requirements above.
+1. Clone this repository or download a release.
 
-2. Download the [latest release](https://github.com/mindcraft-bots/mindcraft/releases/latest) and unzip it, or clone the repository.
+2. Create your local provider configuration:
 
-3. Rename `settings_llm_providers.example.json` to `settings_llm_providers.json` and fill in your API keys (you only need one). The desired model is set in `andy.json` or other profiles. For other models refer to the table below.
+```text
+settings_llm_providers.example.json
+        ↓
+settings_llm_providers.json
+```
 
-4. In terminal/command prompt, run `npm install` from the installed directory
+3. Configure at least one model provider. Never commit API keys.
 
-5. Start a minecraft world and open it to LAN on localhost port `55916`
+4. Install dependencies:
 
-6. Run `node main.js` from the installed directory
+```bash
+npm install
+```
 
-If you encounter issues, check the [FAQ](https://github.com/mindcraft-bots/mindcraft/blob/main/FAQ.md) or find support on [discord](https://discord.gg/mp73p35dzC). We are currently not very responsive to github issues. To run tasks please refer to [Minecollab Instructions](minecollab.md#installation)
+5. Start a Minecraft world and expose it to LAN, or configure an external Minecraft server in `settings.js`.
 
+6. Start Mindcraft:
+
+```bash
+node main.js
+```
+
+For development and automated testing, see the benchmark and testing sections below.
 
 # Configuration
-## Model Customization
 
-You can configure project details in `settings.js`. [See file.](settings.js)
+Main configuration is stored in:
 
-You can configure the agent's name, model, and prompts in their profile like `andy.json`. The model can be specified with the `model` field, with values like `model: "gemini-2.5-pro"`. You will need the correct API key for the API provider you choose. See all supported APIs below.
-
-<details>
-<summary><strong>⭐ VIEW SUPPORTED APIs ⭐</strong></summary>
-
-| API Name | Config Variable| Docs |
-|------|------|------|
-| `openai` | `OPENAI_API_KEY` | [docs](https://platform.openai.com/docs/models) |
-| `google` | `GEMINI_API_KEY` | [docs](https://ai.google.dev/gemini-api/docs/models/gemini) |
-| `anthropic` | `ANTHROPIC_API_KEY` | [docs](https://docs.anthropic.com/claude/docs/models-overview) |
-| `xai` | `XAI_API_KEY` | [docs](https://docs.x.ai/docs) |
-| `deepseek` | `DEEPSEEK_API_KEY` | [docs](https://api-docs.deepseek.com/) |
-| `ollama` (local) | n/a | [docs](https://ollama.com/library) |
-| `qwen` | `QWEN_API_KEY` | [Intl.](https://www.alibabacloud.com/help/en/model-studio/developer-reference/use-qwen-by-calling-api)/[cn](https://help.aliyun.com/zh/model-studio/getting-started/models) |
-| `mistral` | `MISTRAL_API_KEY` | [docs](https://docs.mistral.ai/getting-started/models/models_overview/) |
-| `replicate` | `REPLICATE_API_KEY` | [docs](https://replicate.com/collections/language-models) |
-| `groq` (not grok) | `GROQCLOUD_API_KEY` | [docs](https://console.groq.com/docs/models) |
-| `huggingface` | `HUGGINGFACE_API_KEY` | [docs](https://huggingface.co/models) |
-| `novita` | `NOVITA_API_KEY` | [docs](https://novita.ai/model-api/product/llm-api?utm_source=github_mindcraft&utm_medium=github_readme&utm_campaign=link) |
-| `openrouter` | `OPENROUTER_API_KEY` | [docs](https://openrouter.ai/models) |
-| `hyperbolic` | `HYPERBOLIC_API_KEY` | [docs](https://docs.hyperbolic.xyz/docs/getting-started) |
-| `vllm` | n/a | n/a |
-| `cerebras` | `CEREBRAS_API_KEY` | [docs](https://inference-docs.cerebras.ai/introduction) |
-| `mercury` | `MERCURY_API_KEY` | [docs](https://www.inceptionlabs.ai/) |
-
-</details>
-
-For more comprehensive model configuration and syntax, see [Model Specifications](#model-specifications).
-
-For local models, we recommend you use **LM Studio** for the Andy series of models. Ollama breaks current models, and should be avoided.
-Please see our [huggingface page for more info.](https://huggingface.co/collections/Mindcraft-CE)
-
-## Online Servers
-To connect to online servers your bot will need an official Microsoft/Minecraft account. You can use your own personal one, but will need another account if you want to connect too and play with it. To connect, change these lines in `settings.js`:
-```javascript
-"host": "111.222.333.444",
-"port": 55920,
-"auth": "microsoft",
-
-// rest is same...
+```text
+settings.js
 ```
-> [!Important]
-> The bot's name in the profile.json must exactly match the Minecraft profile name! Otherwise the bot will spam talk to itself.
 
-To use different accounts, Mindcraft will connect with the account that the Minecraft launcher is currently using. You can switch accounts in the launcher, then run `node main.js`, then switch to your main account after the bot has connected.
+Bot profiles are stored in:
 
-## Tasks
-
-Tasks automatically start the bot with a prompt and a goal item to acquire or blueprint to construct. To run a simple task that involves collecting 4 oak_logs run 
-
-`node main.js --task_path tasks/basic/single_agent.json --task_id gather_oak_logs`
-
-Here is an example task json format: 
-
+```text
+profiles/
 ```
+
+A profile can select the bot's model, prompts, coding model, vision model, embedding model, and other behavior.
+
+Example:
+
+```json
 {
-    "gather_oak_logs": {
-      "goal": "Collect at least four logs",
-      "initial_inventory": {
-        "0": {
-          "wooden_axe": 1
-        }
-      },
-      "agent_count": 1,
-      "target": "oak_log",
-      "number_of_target": 4,
-      "type": "techtree",
-      "max_depth": 1,
-      "depth": 0,
-      "timeout": 300,
-      "blocked_actions": {
-        "0": [],
-        "1": []
-      },
-      "missing_items": [],
-      "requires_ctable": false
-    }
+  "name": "andy",
+  "model": "openai/gpt-5.4-mini"
 }
 ```
 
-The `initial_inventory` is what the bot will have at the start of the episode, `target` refers to the target item and `number_of_target` refers to the number of target items the agent needs to collect to successfully complete the task. 
+Provider-specific configuration is stored separately in:
 
-If you want more optimization and automatic launching of the minecraft world, you will need to follow the instructions in [Minecollab Instructions](minecollab.md#installation)
-
-## Planned projects (planner → executor → critic)
-
-For long-horizon goals ("build an automated iron farm"), the bot can run a closed planning loop instead of a single endless self-prompt:
-
-1. The **planner** turns the goal into an ordered, dependency-aware plan of concrete steps, each with a machine-verifiable expected outcome (inventory gain, coordinates reached, block/entity nearby, health level, or a freeform check).
-2. The **executor** carries out one step at a time using the normal command/native-tool machinery.
-3. The **observer** snapshots the world before/after and computes the state diff.
-4. The **critic** verifies the step (deterministically where possible, via the model otherwise) and classifies failures.
-5. The **replanner** retries transient failures, revises the plan when an approach is wrong, pauses for human help on missing resources/permissions, and aborts impossible goals.
-
-State is saved to `bots/<name>/active_project.json` after every step, so restarts resume mid-project (tunable via the `planning` block in `settings.js`).
-
-- `!plan <goal>` — create a phased plan and start executing it
-- `!planStatus` — show the phase/task tree, per-step statuses, progress, and the last contextual recovery decision with its reason and evidence
-- `!planStop` — pause the project (resumable)
-- `!planResume` — continue a paused/interrupted project
-- `!planReplan` — discard the remaining steps and ask the planner for a new approach
-
-Plans are hierarchical: the planner emits 2–6 **phases** (e.g. Preparation → Construction → Verification), steps are tagged to a phase and execute earliest-phase-first, and a step can itself be a group whose **sub-tasks** are the executable leaves (the group rolls up automatically when its leaves verify). Flat plans remain fully supported.
-
-### Context-aware recovery policies
-
-When a step fails, recovery is no longer a generic retry: the runner combines the failure class, the chosen policy profile, and **WorldModel facts** (depleted deposits, alternative sources, last-seen targets, active threats, known shelters, health) into an explicit decision with a reason code and evidence, e.g.
-
-```
-Recovery [default:navigate] Obtain 32 iron: target_depleted — nearest known iron_ore deposit is depleted; usable iron_ore deposit 180m away at (180, 64, -20)
+```text
+settings_llm_providers.json
 ```
 
-Actions are `retry`, `repath`, `navigate` (to a known deposit/target with coordinates injected into the next executor turn), `search`, `gather`, `retreat` (to a known base or away from the nearest threat), `replan`, `human` (pause for help), or `abort` — all bounded by the per-step attempt and replan budgets, and all shown by `!planStatus`. Profiles (config `planning.recovery_profile`):
+Keep this file local. It may contain credentials.
 
-- `default` — repath obstructions, gather missing materials once, retreat from danger, replan wrong approaches
-- `explorer` — search aggressively for unknown targets, simple retries on glitches
-- `builder` — prefer routing to known deposits/stations, escalate material problems sooner
-- `survival` — safety-first retreats and earlier replanning
+## Supported Providers
 
-Profiles can be overridden per failure class via `planning.recovery_policies` in `settings.js`; the built-in table lives in `src/agent/planning/policies.js` and the world-aware decision logic in `src/agent/planning/recovery.js`.
+The provider registry currently supports, depending on the installed configuration and model implementation:
 
-### Persistent world model and verified state transitions
+| Provider       | Environment variable  |
+| -------------- | --------------------- |
+| `openai`       | `OPENAI_API_KEY`      |
+| `anthropic`    | `ANTHROPIC_API_KEY`   |
+| `google`       | `GEMINI_API_KEY`      |
+| `xai`          | `XAI_API_KEY`         |
+| `deepseek`     | `DEEPSEEK_API_KEY`    |
+| `openrouter`   | `OPENROUTER_API_KEY`  |
+| `qwen_cn`      | `QWEN_API_KEY`        |
+| `mistral`      | `MISTRAL_API_KEY`     |
+| `replicate`    | `REPLICATE_API_KEY`   |
+| `groq`         | `GROQCLOUD_API_KEY`   |
+| `huggingface`  | `HUGGINGFACE_API_KEY` |
+| `novita`       | `NOVITA_API_KEY`      |
+| `hyperbolic`   | `HYPERBOLIC_API_KEY`  |
+| `cerebras`     | `CEREBRAS_API_KEY`    |
+| `mercury`      | `MERCURY_API_KEY`     |
+| `ollama`       | `OLLAMA_API_KEY`      |
+| `ollama_local` | none                  |
+| `vllm`         | none                  |
+| `lmstudio`     | none                  |
 
-The planning loop is backed by a persistent **world model** (`bots/<name>/world_model.json`): the observation layer continuously turns Minecraft events (entity spawns/despawns, movement, damage, death) and *verified plan-step results* into timestamped, confidence-rated facts — locations (villages, bases, death points), resource deposits, structures, mobs/NPCs, threats, and crafting recipes the bot has actually performed. Volatile facts (threats, dropped items) decay and expire; durable facts survive restarts. The planner receives them as "KNOWN WORLD FACTS", so it routes to already-discovered villages and deposits, avoids depleted sources and known threats, and stops rediscovering the same things.
+Exact provider availability is determined by `settings_llm_providers.json` and the installed model adapters.
 
-Steps can also declare an **exact expected state transition** (the planner emits these for crafting/smelting steps):
+For OpenRouter, models can use the normal provider/model convention:
 
 ```json
-"expected_delta": { "inventory.hopper": 1, "inventory.iron_ingot": -5 }
+{
+  "model": "openrouter/openai/gpt-4o-mini"
+}
 ```
 
-If the executor reports success but the world did not change as declared, the critic deterministically fails the step (positive numbers = gain at least N, negative = exactly N consumed, optional tolerance) — an LLM claiming "crafted" without the inventory change is caught and retried/replanned instead of being trusted.
+or explicit provider configuration:
 
-- `!world` — inspect the model: self state, active project, locations, structures, deposits, mobs, fresh threats, recipes
-- `!where <thing>` — nearest known fact (`!where village`, `!where iron`, `!where zombie`) or a category list (`!where resources`)
+```json
+{
+  "model": {
+    "provider": "openrouter",
+    "model": "openai/gpt-4o-mini"
+  }
+}
+```
 
-For a lighter-weight "just keep working on this" loop, `!goal <prompt>` still drives plain continuous self-prompting without plans or verification.
+# Online Servers
 
-## Benchmark: deterministic and real-LLM evaluation
+Mindcraft can connect to Minecraft servers using a Microsoft-authenticated Minecraft account.
 
-The autonomy benchmark (`src/agent/benchmark/`, results in `benchmark_results/`) runs 8 scripted scenarios through the real Planner → Executor → Observer → WorldModel → Critic → Recovery/Replan pipeline with scoring, thresholds, model comparison, and replay. Full guide: [benchmark_results/README.md](benchmark_results/README.md).
+Configure `settings.js` with the target server:
 
-Deterministic baseline (no API calls, CI-enforced):
+```javascript
+"host": "example.com",
+"port": 25565,
+"auth": "microsoft"
+```
+
+The Minecraft profile name configured for the bot must match the account/profile being used.
+
+Before connecting an autonomous bot to a public server, verify that automated clients, bots, and AI agents are permitted by that server's rules.
+
+Do not use the bot to bypass anti-cheat, anti-bot, authentication, or other server security mechanisms.
+
+# Tasks
+
+The original Mindcraft task system is still supported.
+
+Example:
+
+```bash
+node main.js --task_path tasks/basic/single_agent.json --task_id gather_oak_logs
+```
+
+A task can define:
+
+* Goal text
+* Target item
+* Required quantity
+* Initial inventory
+* Agent count
+* Timeout
+* Blocked actions
+* Crafting requirements
+
+# Autonomous Project Planning
+
+This fork adds a structured long-horizon planning system for goals such as:
+
+```text
+Build an automated iron farm.
+```
+
+Instead of continuously self-prompting, the agent can execute a verified project loop:
+
+```text
+Planner
+   ↓
+Executor
+   ↓
+Observer
+   ↓
+WorldModel
+   ↓
+Critic
+   ↓
+Recovery / Replan
+   ↺
+```
+
+The planner creates dependency-aware steps organized into phases.
+
+Typical phases might be:
+
+```text
+Preparation
+    ↓
+Resource Gathering
+    ↓
+Construction
+    ↓
+Verification
+```
+
+Only executable leaf steps are run. Parent/group tasks roll their status up from their children.
+
+Project state is persisted so interrupted projects can resume.
+
+## Planning Commands
+
+Create and execute a project:
+
+```text
+!plan <goal>
+```
+
+Inspect the project:
+
+```text
+!planStatus
+```
+
+Pause:
+
+```text
+!planStop
+```
+
+Resume:
+
+```text
+!planResume
+```
+
+Discard the remaining plan and replan:
+
+```text
+!planReplan
+```
+
+The simpler continuous goal loop remains available:
+
+```text
+!goal <prompt>
+```
+
+# Context-Aware Recovery
+
+Failures are no longer handled as generic retries.
+
+The recovery system combines:
+
+* Failure type
+* Planner/recovery profile
+* WorldModel facts
+* Known resource locations
+* Depleted deposits
+* Known threats
+* Last-seen entities
+* Known shelters
+* Health state
+* Attempt/replan budgets
+
+Possible recovery actions include:
+
+```text
+retry
+repath
+navigate
+search
+gather
+retreat
+replan
+human
+abort
+```
+
+Example:
+
+```text
+Recovery [default:navigate]
+Obtain 32 iron:
+target_depleted
+nearest known deposit is depleted;
+usable deposit found 180m away at (180, 64, -20)
+```
+
+Recovery profiles include:
+
+```text
+default
+explorer
+builder
+survival
+```
+
+Profiles can be customized through the `planning` configuration in `settings.js`.
+
+# Persistent World Model
+
+The fork maintains a persistent world model at:
+
+```text
+bots/<name>/world_model.json
+```
+
+The model stores verified and observed facts such as:
+
+* Locations
+* Villages
+* Bases
+* Resource deposits
+* Structures
+* Mobs and NPCs
+* Threats
+* Death locations
+* Proven crafting recipes
+* Player state
+* Active project state
+
+Facts have confidence, timestamps, sources, and optional expiration.
+
+Volatile information such as threats can expire, while durable knowledge can survive restarts.
+
+Inspect it in-game:
+
+```text
+!world
+```
+
+Find the nearest known fact:
+
+```text
+!where village
+!where iron
+!where zombie
+```
+
+List a category:
+
+```text
+!where resources
+```
+
+## Verified State Transitions
+
+Planner steps can declare machine-checkable state changes.
+
+Example:
+
+```json
+{
+  "expected_delta": {
+    "inventory.hopper": 1,
+    "inventory.iron_ingot": -5
+  }
+}
+```
+
+The critic can verify the actual world transition rather than trusting the LLM's statement that a step succeeded.
+
+This prevents cases where the model says:
+
+```text
+Crafting completed.
+```
+
+even though the inventory did not actually change.
+
+# Schematic Construction
+
+This fork adds schematic-based construction using existing building infrastructure.
+
+Supported schematic formats include:
+
+* Litematica `.litematic`
+* Sponge / WorldEdit `.schem`
+* Vanilla structure `.nbt`
+
+Useful commands:
+
+```text
+!listBuilds
+```
+
+```text
+!buildMaterials <name>
+```
+
+```text
+!buildSchematic <name> [x y z rotation]
+```
+
+Build state is persisted so interrupted construction can resume.
+
+The build system integrates with the same project planning and verification pipeline rather than bypassing it.
+
+Some complex block orientations and tile-entity contents may require additional handling.
+
+# Humanlike Locomotion
+
+The fork includes a humanization layer for movement and camera behavior.
+
+It provides controlled variation in:
+
+* Gaze movement
+* Head turns
+* Walking vs sprinting
+* Micro-movement
+* Jump timing
+* Reaction delays
+* Idle behavior
+* Per-bot movement personality
+
+The system deliberately bypasses humanization where precise control is required, such as:
+
+* Digging
+* Block placement
+* PvP aiming
+* Riding
+* Swimming
+* Explicit skill-driven camera control
+
+Humanization is intended to make movement behavior less rigid; it is not intended as a mechanism for bypassing server security systems.
+
+# Coding and Sandboxing
+
+Mindcraft's coding system allows the agent to generate JavaScript actions.
+
+This fork includes sandboxing and execution controls around generated code, including:
+
+* Absolute-path validation
+* Linting
+* Cached code
+* Restricted execution
+* Execution timeouts
+* Tool interruption on timeout
+* Error analysis
+
+Coding remains disabled by default.
+
+For additional isolation, a Docker deployment can be used.
+
+> [!WARNING]
+> Sandboxing reduces risk but does not make execution of untrusted LLM-generated code completely safe.
+
+# Benchmarking
+
+This fork contains a deterministic autonomy benchmark and a real-LLM benchmark.
+
+Benchmark code is located in:
+
+```text
+src/agent/benchmark/
+```
+
+Results are written locally to:
+
+```text
+benchmark_results/
+```
+
+The benchmark currently covers eight scenarios:
+
+```text
+wheat_farm_benchmark
+iron_mine_benchmark
+shelter_build_benchmark
+tree_farm_benchmark
+village_outpost_benchmark
+nether_expedition_benchmark
+adversarial_depleted_alternatives_benchmark
+adversarial_trap_target_benchmark
+```
+
+The benchmark intentionally evaluates the complete autonomy pipeline:
+
+```text
+Scenario
+   ↓
+Planner
+   ↓
+Executor
+   ↓
+Observer
+   ↓
+WorldModel
+   ↓
+Critic
+   ↓
+Recovery / Replan
+   ↓
+Metrics
+```
+
+## Deterministic Benchmark
+
+Run the CI benchmark:
 
 ```bash
 node scripts/benchmark_ci.js --seed 123
 ```
 
-Real-LLM evaluation of the exact same scenarios (only the planner's model-decision function is swapped; recovery/verification unchanged):
+The deterministic suite is used as the regression baseline.
+
+## Real-LLM Benchmark
+
+Run one scenario with a real provider:
 
 ```bash
-node scripts/benchmark_llm.js --provider openai --model gpt-5.4-mini --scenarios wheat_farm_benchmark
-node scripts/benchmark_llm.js --provider openai --model gpt-5.4-mini --compare   # baseline vs LLM table
+node scripts/benchmark_llm.js \
+  --provider openrouter \
+  --model openai/gpt-4o-mini \
+  --scenarios wheat_farm_benchmark \
+  --seed 123 \
+  --compare
 ```
 
-Models are configured exactly like profiles (`--provider/--model`, `provider/model`, or `--profile`), with keys from `settings_llm_providers.json`/environment. Costs are recorded only from provider-reported usage plus explicit `--price-in/--price-out` rates (otherwise `n/a`, never fabricated). Every run is capped (`--max-calls`, `--max-model-calls`, `--max-retries`, `--timeout`, `--max-cost`) and `--dry-run` previews without API calls — start with one scenario to bound spend. LLM replays are marked model-dependent/stochastic and never claimed to be exactly reproducible.
+PowerShell:
 
-## Docker Container
+```powershell
+node scripts/benchmark_llm.js `
+  --provider openrouter `
+  --model openai/gpt-4o-mini `
+  --scenarios wheat_farm_benchmark `
+  --seed 123 `
+  --compare
+```
 
-If you intend to `allow_insecure_coding`, it is a good idea to run the app in a docker container to reduce risks of running unknown code. This is strongly recommended before connecting to remote servers, although still does not guarantee complete safety.
+Pricing can be supplied for cost estimation:
+
+```text
+--price-in <USD per 1k input tokens>
+--price-out <USD per 1k output tokens>
+```
+
+Safety controls include:
+
+```text
+--max-calls
+--max-model-calls
+--max-retries
+--timeout
+--max-cost
+--dry-run
+```
+
+The benchmark keeps the existing scenario steps by default and uses the real LLM for planner/replan decisions. This keeps model comparisons directly comparable to the deterministic baseline.
+
+Full-LLM initial planning can be enabled with:
+
+```text
+--use-llm-initial-plan
+```
+
+## Benchmark Design
+
+The evaluation framework records metrics including:
+
+* Completion
+* Total steps
+* Successful/failed steps
+* Retries
+* Replans
+* Recovery actions
+* Recovery reasons
+* Interruptions/resumes
+* Deaths
+* Resource waste
+* Model calls
+* Model failures
+* Token usage
+* Estimated cost
+* Latency
+* Recovery quality
+* Replay information
+
+The benchmark also supports:
+
+* Deterministic replay
+* Model comparison
+* Baseline regression checks
+* Scenario-specific thresholds
+* Recovery-quality evaluation
+* CI enforcement
+
+A single LLM run is not treated as proof that one model is better than another. Repeated runs across seeds are required for meaningful statistical comparisons.
+
+# Development
+
+Run the test suite:
 
 ```bash
-docker build -t mindcraft . && docker run --rm --add-host=host.docker.internal:host-gateway -p 8080:8080 -p 3000-3003:3000-3003 -e SETTINGS_JSON='{"auto_open_ui":false,"profiles":["./profiles/gemini.json"],"host":"host.docker.internal"}' --volume ./settings_llm_providers.json:/app/settings_llm_providers.json --name mindcraft mindcraft
+npm test
 ```
-or simply
+
+Benchmark tests:
+
 ```bash
-docker-compose up --build
+node --test tests/benchmark.test.js
 ```
 
-When running in docker, if you want the bot to join your local minecraft server, you have to use a special host address `host.docker.internal` to call your localhost from inside your docker container. Put this into your [settings.js](settings.js):
+Real-LLM benchmark tests:
 
-```javascript
-"host": "host.docker.internal", // instead of "localhost", to join your local minecraft from inside the docker container
+```bash
+node --test tests/benchmark_llm.test.js
 ```
 
-To connect to an unsupported minecraft version, you can try to use [viaproxy](services/viaproxy/README.md)
+Both benchmark test suites:
 
-# Bot Profiles
-
-Bot profiles are json files (such as `andy.json`) that define:
-
-1. Bot backend LLMs to use for talking, coding, and embedding.
-2. Prompts used to influence the bot's behavior.
-3. Examples help the bot perform tasks.
-
-## Model Specifications
-
-LLM models can be specified simply as `"model": "gpt-5.4"`, or more specifically with `"{api}/{model}"`, like `"openrouter/google/gemini-2.5-pro"`. See all supported APIs [here](#model-customization).
-
-The `model` field can be a string or an object. A model object must specify an `api`, and optionally a `model`, `url`, and additional `params`. You can also use different models/providers for chatting, coding, vision, embedding, and voice synthesis. See the example below.
-
-```json
-"model": {
-  "api": "openai",
-  "model": "gpt-5.4",
-  "url": "https://api.openai.com/v1/",
-  "params": {
-    "max_tokens": 1000,
-    "temperature": 1
-  }
-},
-"code_model": {
-  "api": "openai",
-  "model": "gpt-5.4-mini",
-  "url": "https://api.openai.com/v1/"
-},
-"vision_model": {
-  "api": "openai",
-  "model": "gpt-5.4",
-  "url": "https://api.openai.com/v1/"
-},
-"embedding": {
-  "api": "openai",
-  "url": "https://api.openai.com/v1/",
-  "model": "text-embedding-3-small"
-},
-"speak_model": "openai/tts-1/echo"
+```bash
+node --test tests/benchmark.test.js tests/benchmark_llm.test.js
 ```
 
-`model` is used for chat, `code_model` is used for newAction coding, `vision_model` is used for image interpretation, `embedding` is used to embed text for example selection, and `speak_model` is used for voice synthesis. `model` will be used by default for all other models if not specified. Not all APIs support embeddings, vision, or voice synthesis.
+Lint the project using the repository's configured ESLint setup.
 
-All apis have default models and urls, so those fields are optional. The `params` field is optional and can be used to specify additional parameters for the model. It accepts any key-value pairs supported by the api. Is not supported for embedding models.
+# Security
 
-## Embedding Models
+Never commit:
 
-Embedding models are used to embed and efficiently select relevant examples for conversation and coding.
-
-Supported Embedding APIs: `openai`, `google`, `replicate`, `huggingface`, `novita`
-
-If you try to use an unsupported model, then it will default to a simple word-overlap method. Expect reduced performance. We recommend using supported embedding APIs.
-
-## Voice Synthesis Models
-
-Voice synthesis models are used to narrate bot responses and specified with `speak_model`. This field is parsed differently than other models and only supports strings formatted as `"{api}/{model}/{voice}"`, like `"openai/tts-1/echo"`. We only support `openai` and `google` for voice synthesis.
-
-## Specifying Profiles via Command Line
-
-By default, the program will use the profiles specified in `settings.js`. You can specify one or more agent profiles using the `--profiles` argument: `node main.js --profiles ./profiles/andy.json ./profiles/jill.json`
-
-
-# Contributing
-
-We welcome contributions to the project! We are generally less responsive to github issues, and more responsive to pull requests. Join the [discord](https://discord.gg/mp73p35dzC) for more active support and direction.
-
-While AI generated code is allowed, please vet it carefully. Submitting tons of sloppy code and documentation actively harms development.
-
-## Patches
-
-Some of the node modules that we depend on have bugs in them. To add a patch, change your local node module file and run `npx patch-package [package-name]`
-
-## Development Team
-Thanks to all who contributed to the project, especially the official development team: [@MaxRobinsonTheGreat](https://github.com/MaxRobinsonTheGreat), [@kolbytn](https://github.com/kolbytn), [@icwhite](https://github.com/icwhite), [@Sweaterdog](https://github.com/Sweaterdog), [@Ninot1Quyi](https://github.com/Ninot1Quyi), [@riqvip](https://github.com/riqvip), [@uukelele-scratch](https://github.com/uukelele-scratch), [@mrelmida](https://github.com/mrelmida)
-
-
-## Citation:
-This work is published in the paper [Collaborating Action by Action: A Multi-agent LLM Framework for Embodied Reasoning](https://arxiv.org/abs/2504.17950). Please use this citation if you use this project in your research:
+```text
+settings_llm_providers.json
 ```
+
+or any file containing API keys, authentication tokens, or Minecraft account credentials.
+
+Use environment variables where practical:
+
+```powershell
+$env:OPENROUTER_API_KEY = "your-key"
+```
+
+Do not put API keys directly into source code.
+
+When a key is exposed publicly, revoke it and issue a replacement.
+
+# Project Direction
+
+This fork focuses on moving Mindcraft toward a more reliable autonomous-agent architecture.
+
+Current architecture:
+
+```text
+Planner
+   ↓
+Executor
+   ↓
+Observer
+   ↓
+WorldModel
+   ↓
+Critic
+   ↓
+Recovery / Replan
+```
+
+Current development priorities are centered around:
+
+```text
+1. Reliable live Minecraft integration
+2. Stronger real-LLM evaluation
+3. Repeated multi-model benchmarking
+4. Model selection/routing
+5. Reusable skill acquisition
+6. Longer-horizon autonomous behavior
+```
+
+The deterministic benchmark remains the regression anchor while real-world Minecraft testing is used to identify failures that cannot be reproduced by simulation alone.
+
+# Upstream
+
+This repository originated from the open-source Mindcraft project:
+
+https://github.com/mindcraft-bots/mindcraft
+
+The original project provides the underlying Minecraft/LLM agent framework, Mineflayer integration, profiles, task system, and research foundation.
+
+Changes in this fork should not be assumed to exist upstream.
+
+# Research Citation
+
+The original Mindcraft research is:
+
+**Collaborating Action by Action: A Multi-agent LLM Framework for Embodied Reasoning**
+
+```bibtex
 @article{mindcraft2025,
   title = {Collaborating Action by Action: A Multi-agent LLM Framework for Embodied Reasoning},
-  author = {White*, Isadora and Nottingham*, Kolby and Maniar, Ayush and Robinson, Max and Lillemark, Hansen and Maheshwari, Mehul and Qin, Lianhui and Ammanabrolu, Prithviraj},
+  author = {White, Isadora and Nottingham, Kolby and Maniar, Ayush and Robinson, Max and Lillemark, Hansen and Maheshwari, Mehul and Qin, Lianhui and Ammanabrolu, Prithviraj},
   journal = {arXiv preprint arXiv:2504.17950},
   year = {2025},
-  url = {https://arxiv.org/abs/2504.17950},
+  url = {https://arxiv.org/abs/2504.17950}
 }
 ```
 
-## Contributors
+Please cite the original paper when using the underlying Mindcraft research in academic work.
 
-Thanks to everyone who has submitted issues on and off Github, made suggestions, and generally helped make this a better project.
+# License
 
-![Contributors](https://contrib.rocks/image?repo=mindcraft-bots/mindcraft)
+See the repository's license files for the applicable licensing terms and the obligations inherited from the upstream project.
+
+# Status
+
+This is an actively developed fork.
+
+The benchmark, planning, world-model, recovery, construction, and humanization systems are under ongoing development, and some features may still have implementation-specific limitations.
+
+For bugs or improvements specific to this fork, use the GitHub issue tracker:
+
+https://github.com/3spress0/mindcraft/issues
