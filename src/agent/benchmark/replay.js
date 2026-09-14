@@ -8,18 +8,34 @@
 import fs from 'fs';
 import path from 'path';
 
+import { BENCHMARK_VERSION, BENCHMARK_SCHEMA_VERSION } from './llm_planner.js';
+
 export class ReplayLogger {
-    constructor({ runId = null, scenario = null, seed = null } = {}) {
+    constructor({ runId = null, scenario = null, seed = null, runMode = 'deterministic', modelProvider = null, modelName = null, modelConfigId = null, benchmarkVersion = null } = {}) {
         this.runId = runId || `replay_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
         this.scenario = scenario;
         this.seed = seed || Math.floor(Math.random() * 1e9);
+        this.runMode = runMode || 'deterministic';
+        this.modelProvider = modelProvider || (this.runMode === 'deterministic' ? 'deterministic' : null);
+        this.modelName = modelName || null;
+        this.modelConfigId = modelConfigId || null;
+        this.benchmarkVersion = benchmarkVersion || BENCHMARK_VERSION;
         this.startedAt = Date.now();
         this.events = [];
         this.states = [];
         this.injections = [];
         this.steps = [];
+        this.plannerOutputs = [];
         this.initialWorld = null;
         this.finalMetrics = null;
+    }
+
+    setModelInfo({ runMode = null, provider = null, model = null, configId = null, benchmarkVersion = null } = {}) {
+        if (runMode) this.runMode = runMode;
+        if (provider) this.modelProvider = provider;
+        if (model) this.modelName = model;
+        if (configId) this.modelConfigId = configId;
+        if (benchmarkVersion) this.benchmarkVersion = benchmarkVersion;
     }
 
     setInitialWorld(world) {
@@ -106,6 +122,21 @@ export class ReplayLogger {
         });
     }
 
+    recordPlannerOutput(output) {
+        this.plannerOutputs.push({ ...output });
+        this.log('planner_output', {
+            provider: output.provider || null,
+            model: output.model || null,
+            attempt: output.attempt ?? null,
+            latencyMs: output.latencyMs ?? null,
+            error: output.error ? String(output.error.message || output.error) : null,
+        });
+    }
+
+    recordPlannerOutputs(outputs) {
+        for (const output of outputs || []) this.recordPlannerOutput(output);
+    }
+
     setFinalMetrics(metrics) {
         this.finalMetrics = metrics.summary ? metrics.summary() : metrics;
         this.log('final_metrics', this.finalMetrics);
@@ -117,6 +148,11 @@ export class ReplayLogger {
             scenario: this.scenario?.name || this.scenario,
             scenarioData: this.scenario?.toJSON ? this.scenario.toJSON() : this.scenario,
             seed: this.seed,
+            runMode: this.runMode,
+            modelProvider: this.modelProvider,
+            modelName: this.modelName,
+            modelConfigId: this.modelConfigId,
+            benchmarkVersion: this.benchmarkVersion,
             startedAt: this.startedAt,
             endedAt: Date.now(),
             initialWorld: this.initialWorld,
@@ -124,8 +160,9 @@ export class ReplayLogger {
             injections: this.injections,
             states: this.states,
             steps: this.steps,
+            plannerOutputs: this.plannerOutputs,
             finalMetrics: this.finalMetrics,
-            version: 1,
+            version: BENCHMARK_SCHEMA_VERSION,
         };
     }
 
@@ -195,6 +232,37 @@ export class ReplayPlayer {
     }
 
     /**
+     * Run mode recorded with the replay: 'deterministic' or 'llm'.
+     * Replays persisted before LLM evaluation have no runMode and default
+     * to deterministic.
+     */
+    getRunMode() {
+        return this.replay.runMode || this.replay.finalMetrics?.runMode || 'deterministic';
+    }
+
+    /**
+     * True only for deterministic replays whose output can be reproduced
+     * exactly. Stochastic LLM output is never claimed to be deterministic.
+     */
+    isDeterministicRun() {
+        return this.getRunMode() === 'deterministic';
+    }
+
+    getModelInfo() {
+        return {
+            runMode: this.getRunMode(),
+            provider: this.replay.modelProvider || this.replay.finalMetrics?.modelProvider || null,
+            model: this.replay.modelName || this.replay.finalMetrics?.modelName || null,
+            configId: this.replay.modelConfigId || this.replay.finalMetrics?.modelConfigId || null,
+            benchmarkVersion: this.replay.benchmarkVersion || this.replay.finalMetrics?.benchmarkVersion || '1.0.0',
+        };
+    }
+
+    getPlannerOutputs() {
+        return this.replay.plannerOutputs || [];
+    }
+
+    /**
      * Generate reproduction script.
      * Returns a JS code snippet that can recreate the scenario.
      */
@@ -202,6 +270,33 @@ export class ReplayPlayer {
         const scenarioName = this.replay.scenario;
         const seed = this.replay.seed;
         const runId = this.replay.runId;
+        const modelInfo = this.getModelInfo();
+
+        if (!this.isDeterministicRun()) {
+            return `
+// Reproduction note for model-dependent run ${runId}
+// ------------------------------------------------
+// This replay used a real LLM planner (${modelInfo.configId || modelInfo.provider || 'unknown model'}).
+// Stochastic LLM output cannot be reproduced deterministically: re-running the
+// same scenario/seed may produce a different plan. The seed, model config,
+// planner outputs, injections, and world state below are the audit trail.
+// To re-evaluate (not reproduce) with the same model, run:
+//   node scripts/benchmark_llm.js --provider ${modelInfo.provider || '<provider>'} --model ${modelInfo.model || '<model>'} --scenarios ${scenarioName} --seed ${seed}
+import { createScenario } from './src/agent/benchmark/scenarios/index.js';
+import { BenchmarkHarness } from './src/agent/benchmark/harness.js';
+
+const scenario = createScenario('${scenarioName}');
+const harness = new BenchmarkHarness(scenario, {
+    plannerModel: { provider: '${modelInfo.provider || 'unknown'}', model: '${modelInfo.model || 'unknown'}' },
+    seed: ${seed},
+});
+
+const result = await harness.run();
+console.log('Re-evaluation result (stochastic, may differ):', result.metrics.toJSON());
+console.log('Original failure:', ${this.isFailure()});
+console.log('Re-evaluation success:', result.success);
+`;
+        }
 
         return `
 // Reproduction script for failed run ${runId}
@@ -247,8 +342,16 @@ console.log('Repro success:', result.success);
             differences.push({ field: 'score', original: orig.score?.total, current: current.score?.total });
         }
 
+        const runMode = this.getRunMode();
+        const stochastic = runMode !== 'deterministic';
         return {
-            isDeterministic: differences.length === 0,
+            isDeterministic: differences.length === 0 && !stochastic,
+            reproducible: differences.length === 0 && !stochastic,
+            stochastic,
+            runMode,
+            reason: stochastic
+                ? 'Original run used a stochastic LLM planner; exact reproduction is not expected.'
+                : (differences.length === 0 ? 'Deterministic replay matches.' : 'Deterministic replay differs.'),
             differences,
             original: orig,
             current,
@@ -259,14 +362,20 @@ console.log('Repro success:', result.success);
      * Generate human-readable report of the replay.
      */
     generateReport() {
+        const modelInfo = this.getModelInfo();
         const lines = [];
         lines.push(`# Replay Report: ${this.replay.runId}`);
         lines.push('');
         lines.push(`**Scenario:** ${this.replay.scenario}`);
         lines.push(`**Seed:** ${this.replay.seed}`);
+        lines.push(`**Run Mode:** ${modelInfo.runMode}${this.isDeterministicRun() ? ' (deterministic, reproducible)' : ' (model-dependent, stochastic — exact reproduction not expected)'}`);
+        if (modelInfo.configId) lines.push(`**Model:** ${modelInfo.configId}`);
+        lines.push(`**Benchmark Version:** ${modelInfo.benchmarkVersion}`);
         lines.push(`**Started:** ${new Date(this.replay.startedAt).toISOString()}`);
         lines.push(`**Completion:** ${this.replay.finalMetrics?.completion ? '✓' : '✗'} (${this.replay.finalMetrics?.completionPct || 0}%)`);
         lines.push(`**Score:** ${this.replay.finalMetrics?.score?.total || 0}/100`);
+        const plannerOutputs = this.getPlannerOutputs();
+        if (plannerOutputs.length) lines.push(`**Planner Outputs Recorded:** ${plannerOutputs.length}`);
         lines.push('');
 
         lines.push('## Steps');

@@ -1,5 +1,5 @@
 /**
- * harness.js — deterministic integration harness
+ * harness.js — deterministic integration harness (with real-LLM planner option)
  *
  * Runs the real planner → executor → observer → WorldModel → critic → recovery pipeline,
  * with scripted world-state injections for:
@@ -28,6 +28,7 @@ import { BenchmarkMetrics } from './metrics.js';
 import { checkSuccessCondition, EVENT_TYPES, TRIGGER_AT } from './scenario.js';
 import { createExpectedSnapshot, compareSnapshot, ConstructionRegistry } from '../planning/construction_damage.js';
 import { ingestVerifiedStep, syncProject } from '../observation/ingest.js';
+import { LlmPlannerAdapter, normalizePlannerModelConfig } from './llm_planner.js';
 
 export class FakeBot {
     constructor({ inventory = {}, position = { x: 0, y: 64, z: 0 }, health = 20, food = 20, dimension = 'overworld', blocks = {} } = {}) {
@@ -417,13 +418,35 @@ export class BenchmarkHarness {
         plannerModel = 'deterministic',
         enableConstructionDamage = true,
         seed = null,
+        modelFactory = null,
+        llmLimits = {},
+        llmPricing = null,
+        pricing = null,
+        useLlmInitialPlan = false,
     } = {}) {
         this.scenario = scenario;
         this.tmpDir = tmpDir || fs.mkdtempSync(path.join(os.tmpdir(), 'mindcraft-bench-'));
         this.plannerModel = plannerModel;
+        this.plannerConfig = normalizePlannerModelConfig(plannerModel);
+        this.runMode = this.plannerConfig.mode;
         this.enableConstructionDamage = enableConstructionDamage;
         this.seed = seed || Math.floor(Math.random() * 1e9);
-        this.metrics = new BenchmarkMetrics({ scenarioName: scenario.name, plannerModel, seed: this.seed });
+        this.metrics = new BenchmarkMetrics({
+            scenarioName: scenario.name,
+            plannerModel: this.plannerConfig.mode === 'llm' ? this.plannerConfig.label : plannerModel,
+            seed: this.seed,
+            modelProvider: this.plannerConfig.provider,
+            modelName: this.plannerConfig.model,
+            modelConfigId: this.plannerConfig.configId,
+            runMode: this.plannerConfig.mode,
+        });
+        // Real-LLM planner wiring. Deterministic runs (string plannerModel)
+        // never create an adapter and behave exactly as before.
+        this.modelFactory = modelFactory || null;
+        this.llmLimits = { ...(llmLimits || {}) };
+        this.llmPricing = llmPricing || pricing || null;
+        this.useLlmInitialPlan = !!useLlmInitialPlan;
+        this._llmAdapter = null;
         this.worldModel = new WorldModel();
         this.bot = new FakeBot({
             inventory: scenario.initial_world.inventory,
@@ -442,6 +465,38 @@ export class BenchmarkHarness {
         this._appliedEventIds = new Set();
 
         this._setupWorldModel();
+    }
+
+    /**
+     * Lazily create the real-LLM planner adapter. Returns null for
+     * deterministic runs. The adapter only receives planner prompt text —
+     * never FakeBot internals.
+     */
+    _getLlmAdapter() {
+        if (this.runMode !== 'llm') return null;
+        if (this._llmAdapter) return this._llmAdapter;
+        this._llmAdapter = new LlmPlannerAdapter({
+            modelConfig: this.plannerConfig.rawConfig,
+            metrics: this.metrics,
+            limits: this.llmLimits,
+            modelFactory: this.modelFactory,
+            pricing: this.llmPricing,
+        });
+        this.metrics.setModelInfo({
+            provider: this._llmAdapter.provider,
+            model: this._llmAdapter.modelName,
+            configId: this._llmAdapter.configId,
+            runMode: 'llm',
+        });
+        return this._llmAdapter;
+    }
+
+    getPlannerOutputs() {
+        return this._llmAdapter ? this._llmAdapter.getPlannerOutputs() : [];
+    }
+
+    getLlmStats() {
+        return this._llmAdapter ? this._llmAdapter.getStats() : null;
     }
 
     _setupWorldModel() {
@@ -509,7 +564,12 @@ export class BenchmarkHarness {
 
     async _createProject() {
         const proj = this.scenario.project;
-        if (proj.steps) {
+        // Scenario-defined steps are used verbatim in both modes so the same
+        // scenario definition is comparable. The LLM only generates the
+        // initial plan when the scenario omits steps, or when the caller
+        // explicitly opts into full LLM initial planning.
+        const useScenarioSteps = proj.steps && !(this.runMode === 'llm' && this.useLlmInitialPlan);
+        if (useScenarioSteps) {
             const { steps, phases } = stepsFromJSON(proj.steps, proj.phases || null);
             this.project = new Project({
                 goal: proj.goal || this.scenario.name,
@@ -518,6 +578,23 @@ export class BenchmarkHarness {
                 phases,
                 status: PROJECT.ACTIVE,
             });
+        } else if (this.runMode === 'llm') {
+            const adapter = this._getLlmAdapter();
+            const planner = new Planner({ prompter: {}, bot: {}, world_model: this.worldModel }, {
+                sendRequest: async (messages, system) => adapter.sendRequest(messages, system),
+            });
+            try {
+                const { project, warnings } = await planner.createPlan(proj.goal || this.scenario.name);
+                if ((warnings || []).some((w) => String(w).includes('unusable'))) {
+                    this.metrics.incrementPlannerFailures(1);
+                    this.metrics.recordEvent('planner_fallback', { reason: 'initial plan unusable, single-step fallback' });
+                }
+                this.project = project;
+            } catch (err) {
+                this.metrics.incrementPlannerFailures(1);
+                this.metrics.recordEvent('planner_failed', { error: String(err.message || err), code: err.code || 'unknown' });
+                throw err;
+            }
         } else {
             const planner = new Planner({ prompter: {}, bot: {}, world_model: this.worldModel }, {
                 sendRequest: async () => {
@@ -635,8 +712,13 @@ export class BenchmarkHarness {
         });
         this.agent.handleMessage = executor;
 
-        const planner = new Planner({ prompter: {}, bot: {}, world_model: this.worldModel }, {
-            sendRequest: async (messages, system) => {
+        // Planner: deterministic stub by default; a real provider model only
+        // replaces this decision function in LLM mode. Executor, observer,
+        // world model, critic, and recovery below are identical in both modes.
+        const llmAdapter = this.runMode === 'llm' ? this._getLlmAdapter() : null;
+        const plannerSendRequest = llmAdapter
+            ? async (messages, system) => llmAdapter.sendRequest(messages, system)
+            : async (messages, system) => {
                 this.metrics.recordLLMCall(true);
                 const lastUser = messages[0]?.content || '';
                 if (lastUser.includes('construction damaged') || lastUser.includes('construction_damaged')) {
@@ -666,7 +748,9 @@ export class BenchmarkHarness {
                         { title: 'Verify farm', instruction: 'verify farm', expected: { kind: 'freeform', description: 'farm complete' } },
                     ],
                 });
-            },
+            };
+        const planner = new Planner({ prompter: {}, bot: {}, world_model: this.worldModel }, {
+            sendRequest: plannerSendRequest,
         });
         planner.createPlan = async () => ({ project: this.project, warnings: [] });
 
@@ -878,7 +962,13 @@ export class BenchmarkHarness {
                     break;
                 }
                 const result = await planner.replan(this.project, step, { ...critique, recovery: decision });
-                if (!result) break;
+                if (!result) {
+                    if (this.runMode === 'llm') {
+                        this.metrics.incrementPlannerFailures(1);
+                        this.metrics.recordEvent('planner_failed', { stepTitle: step.title, reason: 'replan returned no usable plan' });
+                    }
+                    break;
+                }
                 if (result.impossible) {
                     this.project.status = PROJECT.FAILED;
                     this.store.save(this.project);

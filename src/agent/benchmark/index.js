@@ -17,6 +17,7 @@ export { ThresholdChecker, DEFAULT_THRESHOLDS, checkThresholds } from './thresho
 export { ModelComparator, compareModels, generateComparisonReport } from './comparison.js';
 export { ReplayLogger, ReplayPlayer, createReplayLogger } from './replay.js';
 export { BenchmarkSuiteRunner, runBenchmarkSuite, runAllScenarios } from './runner.js';
+export { LlmPlannerAdapter, BenchmarkLlmError, normalizePlannerModelConfig, isDeterministicPlannerModel, defaultBenchmarkModelFactory, estimateCost, BENCHMARK_VERSION, BENCHMARK_SCHEMA_VERSION, DEFAULT_LLM_LIMITS } from './llm_planner.js';
 
 import { createWheatFarmScenario } from './scenarios/wheat_farm.js';
 import { BenchmarkHarness } from './harness.js';

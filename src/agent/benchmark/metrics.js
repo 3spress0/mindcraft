@@ -29,11 +29,51 @@
 import fs from 'fs';
 import path from 'path';
 
+import { BENCHMARK_VERSION } from './llm_planner.js';
+
+export { BENCHMARK_VERSION };
+
+function defaultLlmStats() {
+    return {
+        provider: null,
+        model: null,
+        configId: null,
+        calls: 0,
+        successful_calls: 0,
+        failed_calls: 0,
+        retries: 0,
+        input_tokens: null,
+        output_tokens: null,
+        total_tokens: null,
+        estimated_cost: null,
+        cumulative_latency_ms: 0,
+        avg_latency_ms: 0,
+        planner_failures: 0,
+    };
+}
+
 export class BenchmarkMetrics {
-    constructor({ runId = null, scenarioName = 'unknown', plannerModel = 'unknown', seed = null } = {}) {
+    constructor({ runId = null, scenarioName = 'unknown', plannerModel = 'unknown', seed = null, modelProvider = null, modelName = null, modelConfigId = null, runMode = null, benchmarkVersion = null } = {}) {
         this.runId = runId || `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
         this.scenarioName = scenarioName;
-        this.plannerModel = plannerModel;
+        // Backwards compatible: plannerModel may be a string label (deterministic)
+        // or a real-model config object { provider, model, ... } (LLM mode).
+        if (plannerModel != null && typeof plannerModel === 'object') {
+            const provider = plannerModel.provider || plannerModel.api || 'unknown';
+            const model = plannerModel.model || plannerModel.defaultModel || plannerModel.default_model || 'default';
+            this.plannerModel = plannerModel.label || `${provider}/${model}`;
+            this.modelProvider = modelProvider || String(provider);
+            this.modelName = modelName || String(model);
+            this.modelConfigId = modelConfigId || `${provider}/${model}`;
+            this.runMode = runMode || 'llm';
+        } else {
+            this.plannerModel = plannerModel;
+            this.modelProvider = modelProvider || 'deterministic';
+            this.modelName = modelName || String(plannerModel);
+            this.modelConfigId = modelConfigId || String(plannerModel);
+            this.runMode = runMode || 'deterministic';
+        }
+        this.benchmarkVersion = benchmarkVersion || BENCHMARK_VERSION;
         this.seed = seed || Math.floor(Math.random() * 1e9);
         this.startedAt = Date.now();
         this.endedAt = null;
@@ -54,6 +94,14 @@ export class BenchmarkMetrics {
         this.LLM_calls = 0;
         this.LLM_failures = 0;
         this.execution_time = 0;
+
+        // Real-LLM evaluation stats. Deterministic runs keep calls=0 and
+        // null tokens/cost (never fabricated). LLM_calls/LLM_failures above
+        // stay in sync for backwards-compatible scoring.
+        this.llm = defaultLlmStats();
+        this.llm.provider = this.modelProvider;
+        this.llm.model = this.modelName;
+        this.llm.configId = this.modelConfigId;
 
         // Extended tracking
         this.recovery_quality = {
@@ -118,6 +166,69 @@ export class BenchmarkMetrics {
     recordLLMCall(success = true) {
         this.LLM_calls += 1;
         if (!success) this.LLM_failures += 1;
+    }
+
+    setModelInfo({ provider = null, model = null, configId = null, runMode = null } = {}) {
+        if (provider != null) {
+            this.modelProvider = provider;
+            this.llm.provider = provider;
+        }
+        if (model != null) {
+            this.modelName = model;
+            this.llm.model = model;
+        }
+        if (configId != null) {
+            this.modelConfigId = configId;
+            this.llm.configId = configId;
+        }
+        if (runMode != null) this.runMode = runMode;
+    }
+
+    /**
+     * Record one top-level real-model planner call. Also keeps the legacy
+     * LLM_calls/LLM_failures counters in sync so scoring stays comparable.
+     * Unknown token/cost values stay null — never fabricated.
+     */
+    recordModelCall({ success = true, inputTokens = null, outputTokens = null, totalTokens = null, estimatedCost = null, latencyMs = 0, plannerFailed = false } = {}) {
+        this.recordLLMCall(success);
+        this.llm.calls += 1;
+        if (success) this.llm.successful_calls += 1;
+        else {
+            this.llm.failed_calls += 1;
+            this.llm.planner_failures += 1;
+        }
+        if (plannerFailed && success) this.llm.planner_failures += 1;
+        if (inputTokens != null && Number.isFinite(Number(inputTokens))) {
+            this.llm.input_tokens = (this.llm.input_tokens || 0) + Number(inputTokens);
+        }
+        if (outputTokens != null && Number.isFinite(Number(outputTokens))) {
+            this.llm.output_tokens = (this.llm.output_tokens || 0) + Number(outputTokens);
+        }
+        if (totalTokens != null && Number.isFinite(Number(totalTokens))) {
+            this.llm.total_tokens = (this.llm.total_tokens || 0) + Number(totalTokens);
+        } else if (inputTokens != null || outputTokens != null) {
+            const partial = (Number(inputTokens) || 0) + (Number(outputTokens) || 0);
+            if (Number.isFinite(partial) && (inputTokens != null || outputTokens != null)) {
+                this.llm.total_tokens = (this.llm.total_tokens || 0) + partial;
+            }
+        }
+        if (estimatedCost != null && Number.isFinite(Number(estimatedCost))) {
+            this.llm.estimated_cost = (this.llm.estimated_cost || 0) + Number(estimatedCost);
+        }
+        if (latencyMs != null && Number.isFinite(Number(latencyMs))) {
+            this.llm.cumulative_latency_ms += Number(latencyMs);
+        }
+        this.llm.avg_latency_ms = this.llm.calls > 0
+            ? Math.round(this.llm.cumulative_latency_ms / this.llm.calls)
+            : 0;
+    }
+
+    recordModelRetry() {
+        this.llm.retries += 1;
+    }
+
+    incrementPlannerFailures(count = 1) {
+        this.llm.planner_failures += count;
     }
 
     recordEvent(type, data = {}) {
@@ -250,6 +361,11 @@ export class BenchmarkMetrics {
             runId: this.runId,
             scenario: this.scenarioName,
             plannerModel: this.plannerModel,
+            runMode: this.runMode,
+            benchmarkVersion: this.benchmarkVersion,
+            modelProvider: this.modelProvider,
+            modelName: this.modelName,
+            modelConfigId: this.modelConfigId,
             seed: this.seed,
             startedAt: this.startedAt,
             endedAt: this.endedAt,
@@ -269,6 +385,7 @@ export class BenchmarkMetrics {
             resource_waste: this.resource_waste,
             LLM_calls: this.LLM_calls,
             LLM_failures: this.LLM_failures,
+            llm: { ...this.llm },
             recovery_quality: { ...this.recovery_quality },
             score: { ...this.score },
             replay_log_id: this.replay_log_id,
@@ -290,13 +407,29 @@ export class BenchmarkMetrics {
             scenarioName: data.scenario,
             plannerModel: data.plannerModel,
             seed: data.seed,
+            modelProvider: data.modelProvider,
+            modelName: data.modelName,
+            modelConfigId: data.modelConfigId,
+            runMode: data.runMode,
+            benchmarkVersion: data.benchmarkVersion,
         });
         Object.assign(m, data);
         m.startedAt = data.startedAt;
         m.endedAt = data.endedAt;
+        // Backwards compatibility: runs persisted before LLM evaluation
+        // (schema v1) have no runMode/benchmarkVersion/llm fields.
+        if (!data.runMode) m.runMode = 'deterministic';
+        if (!data.benchmarkVersion) m.benchmarkVersion = '1.0.0';
+        if (!data.modelProvider) m.modelProvider = 'deterministic';
+        if (!data.modelName) m.modelName = String(data.plannerModel || 'unknown');
+        if (!data.modelConfigId) m.modelConfigId = String(data.plannerModel || 'unknown');
         // Ensure nested objects are cloned
         m.recovery_quality = data.recovery_quality || m.recovery_quality;
         m.score = data.score || m.score;
+        m.llm = { ...defaultLlmStats(), ...(data.llm || {}) };
+        if (!m.llm.provider) m.llm.provider = m.modelProvider;
+        if (!m.llm.model) m.llm.model = m.modelName;
+        if (!m.llm.configId) m.llm.configId = m.modelConfigId;
         m.steps = data.steps || [];
         m.events = data.events || [];
         m.recoveryLog = data.recoveryLog || [];
@@ -341,6 +474,12 @@ export class BenchmarkStore {
                     time: data.execution_time,
                     score: data.score?.total || 0,
                     model: data.plannerModel,
+                    runMode: data.runMode || 'deterministic',
+                    benchmarkVersion: data.benchmarkVersion || '1.0.0',
+                    modelConfigId: data.modelConfigId || data.plannerModel,
+                    llmCalls: data.llm?.calls ?? 0,
+                    tokens: data.llm?.total_tokens ?? null,
+                    estimatedCost: data.llm?.estimated_cost ?? null,
                 };
             } catch { return null; }
         }).filter(Boolean);
