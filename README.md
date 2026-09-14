@@ -189,6 +189,25 @@ If the executor reports success but the world did not change as declared, the cr
 
 For a lighter-weight "just keep working on this" loop, `!goal <prompt>` still drives plain continuous self-prompting without plans or verification.
 
+## Benchmark: deterministic and real-LLM evaluation
+
+The autonomy benchmark (`src/agent/benchmark/`, results in `benchmark_results/`) runs 8 scripted scenarios through the real Planner → Executor → Observer → WorldModel → Critic → Recovery/Replan pipeline with scoring, thresholds, model comparison, and replay. Full guide: [benchmark_results/README.md](benchmark_results/README.md).
+
+Deterministic baseline (no API calls, CI-enforced):
+
+```bash
+node scripts/benchmark_ci.js --seed 123
+```
+
+Real-LLM evaluation of the exact same scenarios (only the planner's model-decision function is swapped; recovery/verification unchanged):
+
+```bash
+node scripts/benchmark_llm.js --provider openai --model gpt-5.4-mini --scenarios wheat_farm_benchmark
+node scripts/benchmark_llm.js --provider openai --model gpt-5.4-mini --compare   # baseline vs LLM table
+```
+
+Models are configured exactly like profiles (`--provider/--model`, `provider/model`, or `--profile`), with keys from `settings_llm_providers.json`/environment. Costs are recorded only from provider-reported usage plus explicit `--price-in/--price-out` rates (otherwise `n/a`, never fabricated). Every run is capped (`--max-calls`, `--max-model-calls`, `--max-retries`, `--timeout`, `--max-cost`) and `--dry-run` previews without API calls — start with one scenario to bound spend. LLM replays are marked model-dependent/stochastic and never claimed to be exactly reproducible.
+
 ## Docker Container
 
 If you intend to `allow_insecure_coding`, it is a good idea to run the app in a docker container to reduce risks of running unknown code. This is strongly recommended before connecting to remote servers, although still does not guarantee complete safety.

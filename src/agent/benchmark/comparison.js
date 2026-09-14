@@ -80,19 +80,38 @@ export class ModelComparator {
                 completionRate: completions,
                 avgReplans: runs.reduce((s, r) => s + (r.replans || 0), 0) / runs.length,
                 avgRetries: runs.reduce((s, r) => s + (r.retries || 0), 0) / runs.length,
+                ...llmStatsForRuns(runs),
             };
+        }
+
+        // Per-model LLM rollups (tokens/cost/latency across all scenarios)
+        const llmByModel = {};
+        for (const [model, runs] of Object.entries(byModel)) {
+            llmByModel[model] = llmStatsForRuns(runs);
         }
 
         // Leaderboard
         const leaderboard = Object.values(modelAggregates)
-            .map(agg => ({
-                model: agg.model,
-                avgScore: agg.overallAvg,
-                weightedScore: agg.overallWeighted,
-                completionRate: agg.overallCompletion,
-                totalRuns: agg.totalRuns,
-                scenarios: agg.scenarios,
-            }))
+            .map(agg => {
+                const llm = llmByModel[agg.model] || {};
+                const runs = byModel[agg.model] || [];
+                return {
+                    model: agg.model,
+                    avgScore: agg.overallAvg,
+                    weightedScore: agg.overallWeighted,
+                    completionRate: agg.overallCompletion,
+                    totalRuns: agg.totalRuns,
+                    scenarios: agg.scenarios,
+                    avgRecoveryQuality: Math.round(runs.reduce((s, r) => s + (r.recovery_quality?.score || 0), 0) / Math.max(1, runs.length)),
+                    avgReplans: Math.round(runs.reduce((s, r) => s + (r.replans || 0), 0) / Math.max(1, runs.length) * 10) / 10,
+                    avgRetries: Math.round(runs.reduce((s, r) => s + (r.retries || 0), 0) / Math.max(1, runs.length) * 10) / 10,
+                    llmCalls: llm.totalLlmCalls ?? 0,
+                    totalTokens: llm.totalTokens ?? null,
+                    estimatedCost: llm.totalCost ?? null,
+                    avgLatencyMs: llm.avgLatencyMs ?? 0,
+                    runMode: runs[0]?.runMode || 'deterministic',
+                };
+            })
             .sort((a, b) => b.avgScore - a.avgScore)
             .map((e, i) => ({ rank: i + 1, ...e }));
 
@@ -122,6 +141,7 @@ export class ModelComparator {
             scenarioAggregates,
             detailed,
             leaderboard,
+            llmByModel,
             comparisons,
             generatedAt: Date.now(),
         };
@@ -148,6 +168,10 @@ export class ModelComparator {
         for (const entry of result.leaderboard) {
             lines.push(`| ${entry.rank} | ${entry.model} | ${entry.avgScore} | ${entry.weightedScore} | ${(entry.completionRate * 100).toFixed(1)}% | ${entry.totalRuns} | ${entry.scenarios} |`);
         }
+        lines.push('');
+
+        lines.push('## Deterministic vs LLM Evaluation');
+        lines.push(this.generateLlmComparisonTable(result));
         lines.push('');
 
         lines.push('## Per-Model Details');
@@ -181,6 +205,26 @@ export class ModelComparator {
             }
         }
 
+        return lines.join('\n');
+    }
+
+    /**
+     * Markdown table comparing deterministic baseline vs real LLM runs.
+     * Columns: Model, Average Score, Completion Rate, Recovery Quality,
+     * Replans, Retries, LLM Calls, Tokens, Estimated Cost, Average Latency.
+     * Backwards compatible: runs without LLM stats show 0/null.
+     */
+    generateLlmComparisonTable(compareResult = null) {
+        const result = compareResult || this.compare();
+        if (!result) return 'No runs to compare';
+        const lines = [];
+        lines.push('| Model | Avg Score | Completion | Recovery Quality | Replans | Retries | LLM Calls | Tokens | Est Cost | Avg Latency |');
+        lines.push('|-------|-----------|------------|------------------|---------|---------|-----------|--------|----------|-------------|');
+        for (const entry of result.leaderboard) {
+            const tokens = entry.totalTokens == null ? 'n/a' : String(entry.totalTokens);
+            const cost = entry.estimatedCost == null ? 'n/a' : `$${Number(entry.estimatedCost).toFixed(4)}`;
+            lines.push(`| ${entry.model} | ${entry.avgScore} | ${(entry.completionRate * 100).toFixed(1)}% | ${entry.avgRecoveryQuality} | ${entry.avgReplans} | ${entry.avgRetries} | ${entry.llmCalls} | ${tokens} | ${cost} | ${entry.avgLatencyMs}ms |`);
+        }
         return lines.join('\n');
     }
 
@@ -250,6 +294,47 @@ export class ModelComparator {
             leaderboard: result.leaderboard,
         };
     }
+}
+
+/**
+ * Aggregate real-LLM stats across runs. Missing token/cost data stays null.
+ */
+function llmStatsForRuns(runs) {
+    let totalLlmCalls = 0;
+    let totalModelRetries = 0;
+    let totalTokens = 0;
+    let hasTokens = false;
+    let totalCost = 0;
+    let hasCost = false;
+    let latencySum = 0;
+    let latencyRuns = 0;
+    let plannerFailures = 0;
+    for (const run of runs) {
+        const llm = run.llm || {};
+        totalLlmCalls += llm.calls || 0;
+        totalModelRetries += llm.retries || 0;
+        plannerFailures += llm.planner_failures || 0;
+        if (llm.total_tokens != null) {
+            totalTokens += Number(llm.total_tokens) || 0;
+            hasTokens = true;
+        }
+        if (llm.estimated_cost != null) {
+            totalCost += Number(llm.estimated_cost) || 0;
+            hasCost = true;
+        }
+        if ((llm.calls || 0) > 0) {
+            latencySum += Number(llm.avg_latency_ms || 0) * (llm.calls || 0);
+            latencyRuns += llm.calls || 0;
+        }
+    }
+    return {
+        totalLlmCalls,
+        totalModelRetries,
+        totalTokens: hasTokens ? totalTokens : null,
+        totalCost: hasCost ? Math.round(totalCost * 1000000) / 1000000 : null,
+        avgLatencyMs: latencyRuns > 0 ? Math.round(latencySum / latencyRuns) : 0,
+        plannerFailures,
+    };
 }
 
 export function compareModels(metricsList) {
