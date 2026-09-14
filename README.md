@@ -163,6 +163,15 @@ Before connecting an autonomous bot to a public server, verify that automated cl
 
 Do not use the bot to bypass anti-cheat, anti-bot, authentication, or other server security mechanisms.
 
+The live integration harness enforces the same rule mechanically: a non-local server is refused unless staff permission is recorded in an authorization file naming the account, host, port, and who approved automation. There is no flag that skips that gate.
+
+```bash
+node scripts/live/run_controlled_test.js --preflight --host <server> --port <port> \
+  --username <bot-account> --auth microsoft
+```
+
+See [LIVE_TEST_PLAN.md](LIVE_TEST_PLAN.md) for the permission record format and the staged test ramp.
+
 # Tasks
 
 The original Mindcraft task system is still supported.
@@ -524,6 +533,13 @@ node scripts/benchmark_ci.js --seed 123
 
 The deterministic suite is used as the regression baseline.
 
+Regression checks need a saved baseline. If `benchmark_results/baseline_baseline.json` is absent, the CI script enforces the absolute thresholds and reports `Baseline regression: SKIPPED` rather than passing vacuously; `--require-baseline` makes the missing baseline a CI failure, and `--write-baseline` regenerates it deliberately:
+
+```bash
+node scripts/benchmark_ci.js --seed 123 --write-baseline
+node scripts/benchmark_ci.js --seed 123 --require-baseline
+```
+
 ## Real-LLM Benchmark
 
 Run one scenario with a real provider:
@@ -573,6 +589,47 @@ Full-LLM initial planning can be enabled with:
 ```text
 --use-llm-initial-plan
 ```
+
+## Live Integration Testing
+
+The benchmark runs against `FakeBot`, so it validates planner, critic, and recovery logic. It cannot validate Mineflayer interaction, pathfinding, block and entity observation, inventory transactions, latency, chunk loading, authentication, or persistence across a real disconnect. Those are covered by a controlled sequence against a real server:
+
+```text
+connect and authenticate
+   |
+observe nearby world
+   |
+report position, health, inventory, entities
+   |
+gather a resource
+   |
+craft an item
+   |
+build a small structure
+   |
+recover from an injected interruption
+   |
+verify resulting world state (optionally across a reconnect)
+```
+
+Run it in stages:
+
+```bash
+node scripts/live/run_controlled_test.js --preflight
+node scripts/live/run_controlled_test.js --driver selftest
+node scripts/live/run_controlled_test.js --driver mineflayer --host 127.0.0.1 --port 55916 --auth offline --username <bot-account> --features direct
+```
+
+Each phase passes only when the world state actually changed; a phase that cannot be observed is not auto-passed, and a failing mutating phase stops later mutating phases instead of compounding damage. `--features direct` uses no LLM key at all, so the first live runs cost no API calls.
+
+PowerShell, on Windows:
+
+```powershell
+./scripts/live/local_mc_server.ps1 -AcceptEula -Username "<bot-account>"
+node scripts/live/run_controlled_test.js --driver mineflayer --host 127.0.0.1 --port 55916 --auth offline --username "<bot-account>" --features direct,recovery
+```
+
+Reports are written to `results/live/` with credentials redacted, and the FakeBot thresholds are never relaxed to accommodate a live failure. `--driver selftest` exercises the harness only; it is not a live test result.
 
 ## Benchmark Design
 
@@ -633,6 +690,12 @@ Both benchmark test suites:
 node --test tests/benchmark.test.js tests/benchmark_llm.test.js
 ```
 
+Live harness tests (no Minecraft, no network required):
+
+```bash
+npm run test:live
+```
+
 Lint the project using the repository's configured ESLint setup.
 
 # Security
@@ -654,6 +717,14 @@ $env:OPENROUTER_API_KEY = "your-key"
 Do not put API keys directly into source code.
 
 When a key is exposed publicly, revoke it and issue a replacement.
+
+The live harness can refuse a burned key permanently: set `LIVE_TEST_LEAKED_KEY_HASHES` to the SHA-256 digest of the exposed value, and any run resolves to a key with that digest fails before connecting.
+
+```powershell
+$env:LIVE_TEST_LEAKED_KEY_HASHES = (Get-FileHash -Algorithm SHA256 -InputStream ([IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes("sk-or-EXPOSED-KEY"))) | Select-Object -ExpandProperty Hash)
+```
+
+Only digests and truncated fingerprints are recorded in reports; key material is redacted from every artifact written to disk.
 
 # Project Direction
 
