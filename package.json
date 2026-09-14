@@ -51,7 +51,12 @@
         "dev:tool-loop": "node scripts/smoke/dev_native_tool_loop.js",
         "test:live:function-calls": "node scripts/smoke/live_function_call_smoke.js",
         "reinstall": "npm run clean:modules && npm install",
-        "clean:modules": "node -e \"const fs=require('fs');const p=require('path');['node_modules','package-lock.json'].forEach(f=>{if(fs.existsSync(f)){if(fs.lstatSync(f).isDirectory()){fs.rmSync(f,{recursive:true,force:true});}else{fs.unlinkSync(f);}}});\""
+        "clean:modules": "node -e \"const fs=require('fs');const p=require('path');['node_modules','package-lock.json'].forEach(f=>{if(fs.existsSync(f)){if(fs.lstatSync(f).isDirectory()){fs.rmSync(f,{recursive:true,force:true});}else{fs.unlinkSync(f);}}});\"",
+        "test:live": "node --test tests/live_controlled_test.test.js",
+        "test:live:harness": "node scripts/live/run_controlled_test.js --driver selftest",
+        "test:live:preflight": "node scripts/live/run_controlled_test.js --preflight",
+        "test:live:local": "node scripts/live/run_controlled_test.js --driver mineflayer --from-settings --features direct",
+        "test:live:local:full": "node scripts/live/run_controlled_test.js --driver mineflayer --from-settings --features direct,recovery,reconnect"
     },
     "devDependencies": {
         "patch-package": "^8.0.0"

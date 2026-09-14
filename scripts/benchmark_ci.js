@@ -30,6 +30,8 @@ function parseArgs() {
     const opts = {
         baselinePath: path.join(__dirname, '..', 'benchmark_results', 'baseline_baseline.json'),
         storeDir: path.join(__dirname, '..', 'benchmark_results'),
+        writeBaseline: false,
+        requireBaseline: false,
         seed: 123,
         model: 'deterministic-ci',
         testFailure: false,
@@ -38,6 +40,8 @@ function parseArgs() {
     for (let i = 0; i < args.length; i++) {
         const a = args[i];
         if (a === '--baseline' && args[i + 1]) opts.baselinePath = args[++i];
+        else if (a === '--write-baseline') opts.writeBaseline = true;
+        else if (a === '--require-baseline') opts.requireBaseline = true;
         else if (a === '--store' && args[i + 1]) opts.storeDir = args[++i];
         else if (a === '--seed' && args[i + 1]) opts.seed = Number(args[++i]);
         else if (a === '--model' && args[i + 1]) opts.model = args[++i];
@@ -47,6 +51,8 @@ function parseArgs() {
             console.log(`Usage: node scripts/benchmark_ci.js [options]
 Options:
   --baseline <path>   Path to baseline JSON (default benchmark_results/baseline_baseline.json)
+  --write-baseline    Run the suite, then save it as the baseline (deliberate act; review the diff)
+  --require-baseline  Exit non-zero if no baseline exists, so CI cannot silently skip regression checks
   --store <dir>       Store dir for results (default benchmark_results)
   --seed <num>        Deterministic seed (default 123)
   --model <name>      Planner model name (default deterministic-ci)
@@ -174,15 +180,22 @@ async function main() {
     // Normal CI flow
     console.log(`[CI] Loading baseline from ${opts.baselinePath}`);
     let baseline = null;
+    let baselineLoaded = false;
     if (fs.existsSync(opts.baselinePath)) {
         try {
             baseline = JSON.parse(fs.readFileSync(opts.baselinePath, 'utf8'));
+            baselineLoaded = true;
             console.log(`[CI] Baseline loaded: avgScore ${baseline.avgScore}, scenarios ${baseline.scenarios?.length ?? baseline.runs?.length ?? 'unknown'}`);
         } catch (err) {
             console.warn(`[CI] Failed to load baseline: ${err.message}, proceeding without baseline`);
         }
     } else {
-        console.warn(`[CI] Baseline not found at ${opts.baselinePath}, running without baseline regression check`);
+        console.warn(`[CI] Baseline not found at ${opts.baselinePath} — the regression-from-baseline check is SKIPPED.`);
+        console.warn(`[CI] Only absolute thresholds are enforced this run. Establish a baseline with --write-baseline, and use --require-baseline in CI.`);
+        if (opts.requireBaseline) {
+            console.error('[CI] --require-baseline set but no baseline exists; refusing to report a vacuous pass.');
+            process.exit(3);
+        }
     }
 
     console.log(`[CI] Running benchmark suite: ${opts.scenarios.length} scenarios, model ${opts.model}, seed ${opts.seed}`);
@@ -194,6 +207,30 @@ async function main() {
     const thresholdResult = checker.checkAggregate(metricsList.map(m => m.summary ? m.summary() : m));
 
     printReport(suiteResult.aggregate, thresholdResult, metricsList.map(m => m.summary ? m.summary() : m));
+
+    if (opts.writeBaseline) {
+        const summaries = metricsList.map((m) => m.summary ? m.summary() : m);
+        const payload = {
+            generatedAt: new Date().toISOString(),
+            seed: opts.seed,
+            model: opts.model,
+            avgScore: suiteResult.aggregate?.avgScore ?? null,
+            overallCompletion: suiteResult.aggregate?.overallCompletion ?? null,
+            runs: summaries.map((sm) => ({
+                scenario: sm.scenario,
+                score: sm.score,
+                completion: sm.completion,
+                retries: sm.retries,
+                replans: sm.replans,
+                deaths: sm.deaths,
+                seed: sm.seed,
+            })),
+        };
+        fs.mkdirSync(path.dirname(opts.baselinePath), { recursive: true });
+        fs.writeFileSync(opts.baselinePath, JSON.stringify(payload, null, 2));
+        console.log(`[CI] Baseline written to ${opts.baselinePath} (${payload.runs.length} runs, avgScore ${payload.avgScore}). Review the diff before committing.`);
+        process.exit(0);
+    }
 
     // Also check replay determinism
     console.log('=== Replay Determinism Check ===');
@@ -224,7 +261,7 @@ async function main() {
 
     console.log(`=== Final CI Status: ${overallPassed ? '✅ PASSED' : '❌ FAILED'} ===`);
     console.log(`Aggregate completion: ${(suiteResult.aggregate.overallCompletion * 100).toFixed(1)}% (expected 100%)`);
-    console.log(`Baseline regression: ${thresholdResult.passed ? 'PASS' : 'FAIL'}`);
+    console.log(`Baseline regression: ${!baselineLoaded ? 'SKIPPED (no baseline — not enforced this run)' : thresholdResult.passed ? 'PASS' : 'FAIL'}`);
     console.log(`Replay determinism: ${replayPassed ? 'PASS' : 'FAIL'}`);
 
     // Exit codes: 0 pass, 1 fail
