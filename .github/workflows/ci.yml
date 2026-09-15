@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [ultimate, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test on Node.js 24
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Node 24 is the supported runtime for the whole project (see .nvmrc).
+      # setup-node reads the version from .nvmrc so CI can never drift from
+      # local development or Codespaces.
+      - name: Use Node.js from .nvmrc
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Verify Node.js 24
+        run: |
+          node --version
+          node -e "if (process.versions.node.split('.')[0] !== '24') { console.error('Expected Node.js 24, got ' + process.version); process.exit(1); }"
+
+      # Build prerequisites for the optional native headless-rendering stack
+      # (gl/canvas/node-canvas-webgl), same list as Dockerfile + devcontainer.
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential python3 xvfb xauth \
+            libgl1-mesa-dev libgles2-mesa-dev libosmesa6-dev \
+            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev \
+            libxi-dev libxinerama-dev libxrandr-dev
+
+      # Installs the full tree, including the optional native GL stack, and
+      # applies the patch-package patches during postinstall.
+      - name: Install dependencies
+        run: npm install
+
+      # Note: repo-wide `npx eslint .` currently reports pre-existing errors
+      # from before this configuration; re-enable a lint gate once that debt
+      # is addressed. Files touched by this change lint clean individually.
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Live harness self-test (no Minecraft server required)
+        run: npm run test:live:harness
+
+  docker:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build image
+        run: docker build -t mindcraft-test .

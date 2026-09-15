@@ -29,13 +29,15 @@
 ## Requirements
 
 * Minecraft Java Edition compatible with the version supported by the installed Mindcraft/Mineflayer stack.
-* Node.js. LTS releases are recommended.
+* **Node.js 24 (Active LTS)**. Node.js 24 is the supported runtime and development target for this project. It is pinned consistently across local development (`.nvmrc`/`.node-version`), Codespaces (`.devcontainer/`), CI (`.github/workflows/ci.yml`), and Docker (`node:24-*` images), and `npm install` enforces it via `engines` + `engine-strict` (`.npmrc`). With `nvm`, run `nvm install && nvm use` in the repo root.
 * At least one supported LLM provider/API key unless using a local model.
 * A Minecraft account for online-mode servers.
 
-Check the current repository configuration before selecting a Node.js version, because native dependencies may require additional build tooling on some platforms.
+The bot screenshot/vision feature uses native modules (`gl`, `canvas`, via `node-canvas-webgl`). These are **optional dependencies**: if they cannot be built for your platform they are skipped and the rest of the project still installs and runs normally — only screenshot-based vision is unavailable. They build automatically in the Docker image and the Codespaces devcontainer; to build them locally, see "Native dependencies" below.
 
 ## Installation
+
+> Using GitHub Codespaces or VS Code Dev Containers instead? This repository ships `.devcontainer/`, so a fresh container lands on Node.js 24 with all native prerequisites and runs `npm install` for you. You can skip the steps below (except provider configuration).
 
 1. Clone this repository or download a release.
 
@@ -49,10 +51,11 @@ settings_llm_providers.json
 
 3. Configure at least one model provider. Never commit API keys.
 
-4. Install dependencies:
+4. Make sure you are on Node.js 24, then install dependencies:
 
 ```bash
-npm install
+nvm install && nvm use   # reads .nvmrc, skip if Node.js 24 is already active
+npm install              # fails early with EBADENGINE on the wrong Node version
 ```
 
 5. Start a Minecraft world and expose it to LAN, or configure an external Minecraft server in `settings.js`.
@@ -64,6 +67,20 @@ node main.js
 ```
 
 For development and automated testing, see the benchmark and testing sections below.
+
+### Native dependencies (only for the bot screenshot/vision feature)
+
+The headless renderer (`gl` via `node-canvas-webgl`) compiles native code. On Node.js 24 it is always built from source (no prebuilt binary exists for Node 24 yet), which requires:
+
+* **Debian/Ubuntu:** `sudo apt-get install -y build-essential python3 libgl1-mesa-dev libgles2-mesa-dev libosmesa6-dev libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev libxi-dev libxinerama-dev libxrandr-dev`
+* **macOS:** Xcode command line tools (`xcode-select --install`)
+* **Windows:** Visual Studio Build Tools ("Desktop development with C++")
+
+If the build fails or the prerequisites are missing, `npm install` continues and **skips** these optional packages; if the agent is then asked for a screenshot it responds that vision capture is unavailable. Use the Docker image or Codespaces devcontainer to get the feature without touching your host.
+
+```bash
+docker compose up --build
+```
 
 # Configuration
 

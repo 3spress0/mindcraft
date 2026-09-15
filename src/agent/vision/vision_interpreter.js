@@ -1,15 +1,39 @@
 import { Vec3 } from 'vec3';
-import { Camera } from "./camera.js";
 import fs from 'fs';
+
+const CAMERA_UNAVAILABLE_MESSAGE = 'Vision capture is unavailable: the native headless-rendering dependencies (gl/node-canvas-webgl) are not installed or failed to load. Install the native build prerequisites listed in the README and reinstall, or run the project in Docker/Codespaces where they are preinstalled.';
 
 export class VisionInterpreter {
     constructor(agent, allow_vision) {
         this.agent = agent;
         this.allow_vision = allow_vision;
         this.fp = './bots/'+agent.name+'/screenshots/';
+        this.camera = null;
+        this._cameraLoad = null;
         if (allow_vision) {
-            this.camera = new Camera(agent.bot, this.fp);
+            this._cameraLoad = this._loadCamera();
         }
+    }
+
+    async _loadCamera() {
+        try {
+            // Loaded lazily: the headless renderer depends on the native `gl`
+            // module, which is an optional dependency and may be missing when it
+            // cannot be built for the current platform/Node version.
+            const { Camera } = await import('./camera.js');
+            this.camera = new Camera(this.agent.bot, this.fp);
+        } catch (error) {
+            this.camera = null;
+            console.warn(CAMERA_UNAVAILABLE_MESSAGE);
+            console.warn('Camera load error:', error?.message || error);
+        }
+    }
+
+    async _getCamera() {
+        if (this._cameraLoad) {
+            await this._cameraLoad;
+        }
+        return this.camera;
     }
 
     async lookAtPlayer(player_name, direction) {
@@ -24,15 +48,20 @@ export class VisionInterpreter {
             return `Could not find player ${player_name}`;
         }
 
+        const camera = await this._getCamera();
+        if (!camera) {
+            return CAMERA_UNAVAILABLE_MESSAGE;
+        }
+
         let filename;
         if (direction === 'with') {
             await bot.look(player.yaw, player.pitch);
             result = `Looking in the same direction as ${player_name}\n`;
-            filename = await this.camera.capture();
+            filename = await camera.capture();
         } else {
             await bot.lookAt(new Vec3(player.position.x, player.position.y + player.height, player.position.z));
             result = `Looking at player ${player_name}\n`;
-            filename = await this.camera.capture();
+            filename = await camera.capture();
 
         }
 
@@ -46,10 +75,15 @@ export class VisionInterpreter {
         }
         let result = "";
         const bot = this.agent.bot;
+        const camera = await this._getCamera();
+        if (!camera) {
+            return CAMERA_UNAVAILABLE_MESSAGE;
+        }
+
         await bot.lookAt(new Vec3(x, y + 2, z));
         result = `Looking at coordinate ${x}, ${y}, ${z}\n`;
 
-        let filename = await this.camera.capture();
+        let filename = await camera.capture();
 
         return result + `Image analysis: "${await this.analyzeImage(filename)}"`;
     }
@@ -58,7 +92,7 @@ export class VisionInterpreter {
         const bot = this.agent.bot;
         const maxDistance = 128; // Maximum distance to check for blocks
         const targetBlock = bot.blockAtCursor(maxDistance);
-        
+
         if (targetBlock) {
             return `Block at center view: ${targetBlock.name} at (${targetBlock.position.x}, ${targetBlock.position.y}, ${targetBlock.position.z})`;
         } else {
@@ -90,4 +124,4 @@ export class VisionInterpreter {
             return `Error reading image: ${error.message}`;
         }
     }
-} 
+}

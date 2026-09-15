@@ -1,0 +1,17 @@
+{
+    "name": "Mindcraft (Node.js 24)",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+    "postCreateCommand": "npm install",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "dbaeumer.vscode-eslint"
+            ]
+        }
+    },
+    "forwardPorts": [3000, 3001, 3002, 3003, 8080],
+    "remoteUser": "node"
+}
