@@ -53,16 +53,17 @@ export const WOOL_COLORS = [
 ]
 
 
-export function initBot(username) {
+export function initBot(username, overrides = {}) {
+    const selectedVersion = overrides.version ?? settings.minecraft_version ?? mc_version;
     const options = {
-        username: username,
-        host: settings.host,
-        port: settings.port,
-        auth: settings.auth,
-        version: mc_version,
-        checkTimeoutInterval: 60000,  // 60s keep-alive check (default 30s) — reduces disconnects on slow servers
-    }
-    if (!mc_version || mc_version === "auto") {
+        username,
+        host: overrides.host ?? settings.host,
+        port: overrides.port ?? settings.port,
+        auth: overrides.auth ?? settings.auth,
+        version: selectedVersion,
+        checkTimeoutInterval: overrides.checkTimeoutInterval ?? 60000, // slow remote/Aternos servers need a generous keep-alive window
+    };
+    if (!selectedVersion || selectedVersion === "auto") {
         delete options.version;
     }
 
@@ -107,9 +108,9 @@ export function initBot(username) {
         if (event === 'error' && args[0]) {
             const err = args[0];
             const errStr = err instanceof Error ? err.message : String(err);
-            if (errStr.includes('PartialReadError')) {
+            if (errStr.includes('PartialReadError') && overrides.suppressPartialReadErrors !== false) {
                 console.warn('[mcdata] Suppressed PartialReadError:', errStr.substring(0, 120));
-                return true; // Swallow the error
+                return true;
             }
         }
         return originalEmit(event, ...args);

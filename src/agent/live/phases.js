@@ -138,7 +138,7 @@ export function phaseById(id) {
  *
  * @param {{features?:string[], task?:object, timeoutScale?:number,
  *          only?:string[], deadlineMs?:number}} opts
- * @returns {{phases:object[], features:string[], budgetMs:number,
+ * @returns {{phases:object[], excludedPhases:object[], features:string[], budgetMs:number,
  *            task:object, warnings:string[], problems:string[]}}
  */
 export function resolvePlan(opts = {}) {
@@ -181,11 +181,29 @@ export function resolvePlan(opts = {}) {
     for (let i = 0; i < n * n; i++) baseTask.build.plan.push({ dx: i % n, dz: Math.floor(i / n), dy: 0 });
     if (n * n < 4) warnings.push(`build plan is only ${n * n} blocks; the phase needs >= 4 placed blocks to verify — raise --build-size`);
 
-    let phases = PHASES.filter((p) => p.requires.every((req) => features.includes(req)));
-    if (opts.only && opts.only.length) {
-        const only = new Set(opts.only);
-        phases = phases.filter((p) => only.has(p.id));
+    const runnable = PHASES.filter((p) => p.requires.every((req) => features.includes(req)));
+    const requestedOnly = opts.only && opts.only.length
+        ? [...new Set(opts.only.map((id) => String(id).trim().toLowerCase()).filter(Boolean))]
+        : null;
+    let phases = runnable;
+    const excludedPhases = [];
+    if (requestedOnly) {
+        const known = new Set(PHASES.map((p) => p.id));
+        for (const id of requestedOnly) {
+            if (!known.has(id)) problems.push(`unknown phase "${id}" (known: ${PHASES.map((p) => p.id).join(', ')})`);
+            else if (!runnable.some((p) => p.id === id)) problems.push(`phase "${id}" is not runnable with the selected features (enable its required feature)`);
+        }
+        phases = runnable.filter((p) => requestedOnly.includes(p.id));
+        for (const p of runnable) {
+            if (!requestedOnly.includes(p.id)) excludedPhases.push({
+                id: p.id,
+                title: p.title,
+                result: 'excluded',
+                reason: '--only intentionally excluded this phase',
+            });
+        }
         if (!phases.length) problems.push('--only selected no runnable phases');
+        if (excludedPhases.length) warnings.push(`--only intentionally excludes: ${excludedPhases.map((p) => p.id).join(', ')}`);
     }
 
     const scaleOr = (ms) => Math.max(1000, Math.round(ms * (Number.isFinite(scale) && scale > 0 ? scale : 1)));
@@ -205,7 +223,18 @@ export function resolvePlan(opts = {}) {
     if (!features.includes(FEATURES.PIPELINE)) warnings.push('pipeline feature OFF: the LLM planner/executor/critic are not exercised, this run tests the protocol layer only');
     if (!features.includes(FEATURES.RECOVERY)) warnings.push('recovery feature OFF: the interruption phase (step 7) is skipped');
 
-    return { phases, features, budgetMs, task: baseTask, warnings, problems, deadlineMs, timeoutScale: scale };
+    return {
+        phases,
+        features,
+        budgetMs,
+        task: baseTask,
+        warnings,
+        problems,
+        deadlineMs,
+        timeoutScale: scale,
+        only: requestedOnly,
+        excludedPhases,
+    };
 }
 
 /** Resolve a `xxxFrom` reference in a verify spec against the plan's task config. */

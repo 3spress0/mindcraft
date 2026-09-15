@@ -45,7 +45,9 @@ export class MineflayerDriver {
         this.inventoryBefore = {};
         this.recovery = { interrupted: false, retried: false, replanned: false, resumed: false, crashed: false, detail: '' };
         this.reconnect = null;
-        this.phaseInfoKey = {};
+        this.connected = false;
+        this.lastConnectionError = null;
+        this._botCleanup = null;
         this.cfg = { ...cfg };
         this._mods = null;
         this.stateDir = cfg.stateDir || path.join(repoRoot, 'results', 'live', cfg.username || 'bot');
@@ -75,7 +77,9 @@ export class MineflayerDriver {
     }
 
     _assertBot() {
-        if (!this.bot) throw new Error('bot is not connected — run the connect phase first');
+        if (!this.bot || !this.connected || this.lastConnectionError) {
+            throw new Error(this.lastConnectionError?.message || 'bot is not connected — the server disconnected or connect did not complete');
+        }
         return this.bot;
     }
 
@@ -110,49 +114,120 @@ export class MineflayerDriver {
 
     async _spawn(bot, timeoutMs) {
         const { parseKickReason } = await import('../../connection_handler.js');
+        const waitMs = Math.max(1000, Number(timeoutMs) || 1000);
+        this._attachLifecycle(bot, parseKickReason);
         return new Promise((resolve, reject) => {
             let settled = false;
+            const onSpawn = () => finish(resolve, true);
+            const onKick = (reason) => finish(reject, this._kickError(parseKickReason, reason));
+            const onError = (err) => finish(reject, new Error(`client error: ${err?.message || err}`));
+            const onEnd = () => finish(reject, new Error('connection ended before the bot spawned'));
+            const cleanup = () => {
+                clearTimeout(timer);
+                bot.removeListener('spawn', onSpawn);
+                bot.removeListener('kicked', onKick);
+                bot.removeListener('error', onError);
+                bot.removeListener('end', onEnd);
+            };
             const finish = (fn, arg) => {
                 if (settled) return;
                 settled = true;
-                clearTimeout(timer);
+                cleanup();
                 fn(arg);
             };
             const timer = setTimeout(() => finish(reject, new Error(
-                `no spawn within ${timeoutMs}ms (offline-mode local server? wrong version? server busy/queued?)`)), timeoutMs);
-            bot.once('spawn', () => finish(resolve, true));
-            bot.once('kicked', (reason) => {
-                const parsed = parseKickReason(reason);
-                finish(reject, new Error(`kicked during login [${parsed.type}] ${parsed.msg}`));
-            });
-            bot.once('error', (err) => finish(reject, new Error(`client error: ${err?.message || err}`)));
+                `no spawn within ${waitMs}ms (server offline/starting, authentication rejected, wrong version, whitelist, or timeout)`)), waitMs);
+            bot.once('spawn', onSpawn);
+            bot.once('kicked', onKick);
+            bot.once('error', onError);
+            bot.once('end', onEnd);
         });
+    }
+
+    _kickError(parseKickReason, reason) {
+        let parsed;
+        try { parsed = parseKickReason(reason); }
+        catch { parsed = { type: 'unknown', msg: String(reason || 'unknown kick reason') }; }
+        return new Error(`kicked during login [${parsed.type}] ${parsed.msg}`);
+    }
+
+    _attachLifecycle(bot, parseKickReason) {
+        this._detachLifecycle();
+        const onError = (err) => {
+            this.lastConnectionError = new Error(`Mineflayer client error: ${err?.message || err}`);
+            this.connected = false;
+            this.log.error?.(`[live] ${this.lastConnectionError.message}`);
+        };
+        const onKicked = (reason) => {
+            const error = this._kickError(parseKickReason, reason);
+            this.lastConnectionError = error;
+            this.connected = false;
+            this.log.error?.(`[live] ${error.message}`);
+        };
+        const onEnd = () => {
+            this.connected = false;
+            this.log.log?.('[live] Mineflayer connection ended');
+        };
+        const onDisconnect = (reason) => {
+            this.connected = false;
+            this.log.error?.(`[live] Mineflayer disconnected${reason ? `: ${String(reason)}` : ''}`);
+        };
+        bot.on('error', onError);
+        bot.on('kicked', onKicked);
+        bot.on('end', onEnd);
+        bot.on('disconnect', onDisconnect);
+        this._botCleanup = () => {
+            bot.removeListener('error', onError);
+            bot.removeListener('kicked', onKicked);
+            bot.removeListener('end', onEnd);
+            bot.removeListener('disconnect', onDisconnect);
+        };
+    }
+
+    _detachLifecycle() {
+        if (this._botCleanup) {
+            try { this._botCleanup(); } catch { /* best effort during teardown */ }
+            this._botCleanup = null;
+        }
     }
 
     /* ------------------------------------------------------------- phase 1 */
     async connect({ phase }) {
         const mods = await this._modsOnce();
-        const ping = await mods.serverInfo(this.cfg.host, this.cfg.port, 2500, false);
+        const ping = await mods.serverInfo(this.cfg.host, this.cfg.port, this.cfg.pingTimeoutMs ?? 5000, false);
         if (ping) {
-            this.log.log?.(`[live] server ping ok: ${ping.name} (v${ping.version}, ${ping.ping}ms)`);
+            this.log.log?.(`[live] server ping ok: ${ping.name} (v${ping.version || 'unknown'}, ${ping.ping}ms)`);
             this.info.serverVersion = ping.version;
             this.info.pingMs = ping.ping;
             if (this.cfg.version && this.cfg.version !== 'auto' && ping.version && ping.version !== this.cfg.version) {
                 throw new Error(`version mismatch: server reports ${ping.version}, config pins ${this.cfg.version}`);
             }
         } else {
-            this.log.error?.(`[live] no server answered ${this.cfg.host}:${this.cfg.port} — is the local server up? (scripts/live/local_mc_server.sh)`);
+            // Aternos may take a while to wake. Let the login attempt make the
+            // final decision instead of claiming success from a failed ping.
+            this.log.error?.(`[live] no status response from ${this.cfg.host}:${this.cfg.port}; the server may be offline or starting, so login will be attempted`);
         }
 
         const { mcdata } = mods;
         const t0 = Date.now();
-        const bot = mcdata.initBot(this.cfg.username);
+        const bot = mcdata.initBot(this.cfg.username, {
+            host: this.cfg.host,
+            port: this.cfg.port,
+            auth: this.cfg.auth,
+            version: this.cfg.version,
+            suppressPartialReadErrors: false,
+        });
         this._prepareBot(bot);
         this.bot = bot;
-        // fail fast on auth problems instead of hanging until spawn timeout
+        this.lastConnectionError = null;
         bot.once('login', () => { this.info.loggedIn = true; });
-        const spawned = await this._spawn(bot, phase.timeoutMs - (Date.now() - t0));
-        if (!spawned) throw new Error('spawn never arrived');
+        try {
+            await this._spawn(bot, phase.timeoutMs - (Date.now() - t0));
+            this.connected = true;
+        } catch (err) {
+            await this._destroyBot(bot);
+            throw err;
+        }
         this.info.timeToSpawnMs = Date.now() - t0;
         this.info.protocol = bot.version ? `${bot.version}` : null;
         this.info.protocolId = bot.protocolVersion ?? null;
@@ -241,12 +316,24 @@ export class MineflayerDriver {
         const mods = await this._modsOnce();
         const blockType = task.gather.blockType || task.gather.item;
         const count = Number(task.gather.count) || 1;
+        const before = mods.world.getInventoryCounts(bot)[blockType] || 0;
         const t0 = Date.now();
-        const ok = await mods.skills.collectBlock(bot, blockType, count);
-        await sleep(500);
-        const have = mods.world.getInventoryCounts(bot)[blockType] || 0;
-        this.phaseInfo[phase.id] = { blockType, requested: count, collected: have, ok: ok !== false, ms: Date.now() - t0 };
-        if (!have) throw new Error(`collectBlock("${blockType}", ${count}) produced no ${blockType} in inventory`);
+        let actionResult;
+        try {
+            actionResult = await mods.skills.collectBlock(bot, blockType, count);
+        } catch (err) {
+            throw new Error(`collectBlock("${blockType}", ${count}) failed: ${err.message}`);
+        }
+        await sleep(this.cfg.actionSettleMs ?? 800);
+        const after = mods.world.getInventoryCounts(bot)[blockType] || 0;
+        const gained = after - before;
+        this.phaseInfo[phase.id] = {
+            blockType, requested: count, before, after, gained,
+            actionReturned: actionResult !== false, ms: Date.now() - t0,
+        };
+        if (gained < count) {
+            throw new Error(`gather did not produce the required inventory delta for ${blockType}: gained ${gained}, need ${count}`);
+        }
         return this.phaseInfo[phase.id];
     }
 
@@ -256,16 +343,24 @@ export class MineflayerDriver {
         const mods = await this._modsOnce();
         const item = task.craft.item;
         const count = Number(task.craft.count) || 1;
+        const before = mods.world.getInventoryCounts(bot);
         const t0 = Date.now();
         try {
             await mods.skills.craftRecipe(bot, item, count);
         } catch (err) {
             throw new Error(`craftRecipe("${item}") failed: ${err.message}`);
         }
-        await sleep(500);
-        const have = mods.world.getInventoryCounts(bot)[item] || 0;
-        this.phaseInfo[phase.id] = { item, requested: count, have, ms: Date.now() - t0 };
-        if (!have) throw new Error(`crafted ${item} is not in inventory after craftRecipe (server rejected the recipe?)`);
+        await sleep(this.cfg.actionSettleMs ?? 800);
+        const after = mods.world.getInventoryCounts(bot);
+        const productGain = (after[item] || 0) - (before[item] || 0);
+        const consumed = inventoryDelta(before, after).filter((entry) => entry.delta < 0);
+        this.phaseInfo[phase.id] = {
+            item, requested: count, before: before[item] || 0, after: after[item] || 0,
+            productGain, consumed, ms: Date.now() - t0,
+        };
+        if (productGain < count || !consumed.length) {
+            throw new Error(`craft did not prove a material transaction for ${item}: product gain ${productGain}/${count}, consumed ${consumed.length ? consumed.map((x) => `${x.item} ${x.delta}`).join(', ') : 'nothing'}`);
+        }
         return this.phaseInfo[phase.id];
     }
 
@@ -287,17 +382,30 @@ export class MineflayerDriver {
                 results.push({ ...b, placed: false, error: err.message });
                 continue;
             }
-            const actual = safe(() => {
-                const read = bot.blockAt({ x: b.x, y: b.y, z: b.z });
-                return read ? read.name : 'air';
-            }, 'unknown');
+            const actual = await this._waitForBlock(bot, b, block, this.cfg.blockReadTimeoutMs ?? 3000);
             results.push({ ...b, placed: !!placed, actual, confirmed: actual === block });
-            await sleep(this.cfg.placeDelayMs ?? 120); // server-friendly pacing
+            await sleep(this.cfg.placeDelayMs ?? 180); // server-friendly pacing
         }
         const confirmed = results.filter((r) => r.confirmed).length;
         this.phaseInfo[phase.id] = { block, anchor, attempted: results.length, confirmed, results };
-        if (!confirmed) throw new Error(`no placed block was readable at the expected coordinates: ${JSON.stringify(results.map((r) => `${r.x},${r.y},${r.z}=${r.actual}`)).slice(0, 400)}`);
+        if (confirmed < this.placedBlocks.length) {
+            throw new Error(`build verification failed: ${confirmed}/${this.placedBlocks.length} expected blocks were readable at their absolute coordinates`);
+        }
         return this.phaseInfo[phase.id];
+    }
+
+    async _waitForBlock(bot, expected, name, timeoutMs) {
+        const deadline = Date.now() + Math.max(250, timeoutMs);
+        let actual = 'air';
+        while (Date.now() < deadline) {
+            actual = safe(() => {
+                const block = bot.blockAt({ x: expected.x, y: expected.y, z: expected.z });
+                return block?.name || 'air';
+            }, 'unknown');
+            if (actual === name) return actual;
+            await sleep(100);
+        }
+        return actual;
     }
 
     async _buildAnchor(bot, mods) {
@@ -325,47 +433,47 @@ export class MineflayerDriver {
         const blockType = task.gather.blockType || task.gather.item;
         const target = Number(task.recovery.count) || 2;
         const start = mods.world.getInventoryCounts(bot)[blockType] || 0;
+        let settled = false;
+        const inFlight = mods.skills.collectBlock(bot, blockType, target)
+            .catch((err) => {
+                this.recovery.detail += `initial collectBlock threw: ${err.message}; `;
+                return false;
+            })
+            .finally(() => { settled = true; });
 
-        // 1. start a real, in-flight task that takes a while
-        const inFlight = mods.skills.collectBlock(bot, blockType, target).catch((err) => {
-            this.recovery.detail += `collectBlock threw: ${err.message}; `;
-            return 'threw';
-        });
         await sleep(this.cfg.interruptAfterMs ?? 1500);
+        if (settled) throw new Error('the recovery action completed before the intentional interruption window');
 
-        // 2. cut it off through the production interrupt path
+        // Cancel a real in-flight operation, then wait for it to settle before
+        // retrying. Overlapping collectBlock calls would make the evidence
+        // ambiguous and can leave a pathfinder task running after teardown.
         bot.interrupt_code = true;
-        safe(() => bot.pathfinder.stop());
-        safe(() => bot.collectBlock.cancelTask());
-        await sleep(400);
+        safe(() => bot.pathfinder?.stop?.());
+        safe(() => bot.collectBlock?.cancelTask?.());
+        await Promise.race([inFlight, sleep(5000)]);
+        if (!settled) throw new Error('collectBlock did not settle after cancellation');
         const mid = mods.world.getInventoryCounts(bot)[blockType] || 0;
         const partial = mid - start;
         this.recovery.interrupted = true;
         this.recovery.detail += `stopped after ${partial}/${target} ${blockType}; `;
 
-        // 3. re-drive the step to completion (retry, not fake success)
         bot.interrupt_code = false;
-        const outcome = await Promise.race([
-            inFlight,
-            sleep(2000).then(() => 'pending'),
-        ]);
-        void outcome;
-        const retry = await mods.skills.collectBlock(bot, blockType, target).catch((err) => {
-            this.recovery.crashed = false;
+        const remaining = Math.max(1, target - Math.max(0, partial));
+        let retry = false;
+        try {
+            retry = await mods.skills.collectBlock(bot, blockType, remaining);
+        } catch (err) {
             this.recovery.detail += `retry threw: ${err.message}; `;
-            return false;
-        });
+        }
         this.recovery.retried = retry !== false;
-        this.recovery.resumed = true;
+        this.recovery.resumed = this.recovery.retried;
         const end = mods.world.getInventoryCounts(bot)[blockType] || 0;
         this.phaseInfo[phase.id] = {
-            ...this.recovery,
-            startedWith: start,
-            atInterrupt: partial,
-            finalDelta: end - start,
-            target,
+            ...this.recovery, startedWith: start, atInterrupt: partial,
+            finalDelta: end - start, target,
         };
         if (!this.recovery.interrupted) throw new Error('interruption did not happen');
+        if (end - start < target) throw new Error(`recovery retry produced ${end - start}/${target} ${blockType}`);
         return this.phaseInfo[phase.id];
     }
 
@@ -417,19 +525,43 @@ export class MineflayerDriver {
             position: floorVec(bot.entity.position),
         };
         const t0 = Date.now();
-        // A genuine protocol-level drop, not a soft stop.
+        // A genuine protocol-level drop, not a soft stop. Remove listeners
+        // before ending the old client so its expected end is not stale state.
+        this._detachLifecycle();
+        this.connected = false;
+        safe(() => bot.pathfinder?.stop?.());
+        safe(() => bot.collectBlock?.cancelTask?.());
         safe(() => bot.quit('live test: deliberate disconnect'));
         safe(() => bot._client?.end?.());
-        await sleep(1500);
+        await sleep(this.cfg.reconnectDropWaitMs ?? 1500);
         this.bot = null;
-        const fresh = mods.mcdata.initBot(this.cfg.username);
+        const fresh = mods.mcdata.initBot(this.cfg.username, {
+            host: this.cfg.host,
+            port: this.cfg.port,
+            auth: this.cfg.auth,
+            version: this.cfg.version,
+            suppressPartialReadErrors: false,
+        });
+        this._prepareBot(fresh);
         this.bot = fresh;
-        await this._spawn(fresh, Math.max(5000, this.cfg.reconnectTimeoutMs ?? 30000));
-        await sleep(2500); // let chunks stream before re-reading the world
+        this.lastConnectionError = null;
+        try {
+            await this._spawn(fresh, Math.max(5000, this.cfg.reconnectTimeoutMs ?? 30000));
+            this.connected = true;
+        } catch (err) {
+            await this._destroyBot(fresh);
+            throw new Error(`reconnect failed: ${err.message}`);
+        }
+        await sleep(this.cfg.reconnectWorldWaitMs ?? 2500); // let chunks stream before re-reading
         const after = mods.world.getInventoryCounts(fresh);
         const blocksSurvived = before.placed.length === 0 ? true : await this._recheckBlocks(fresh, before.placed);
         const inventorySurvived = Object.entries(before.inventory).every(([item, count]) => (after[item] || 0) >= count - 0);
-        const moved = before.position ? Math.abs((fresh.entity?.position?.x ?? 0) - before.position.x) : 0;
+        const position = floorVec(fresh.entity?.position);
+        const moved = before.position && position ? Math.sqrt(
+            (position.x - before.position.x) ** 2 +
+            (position.y - before.position.y) ** 2 +
+            (position.z - before.position.z) ** 2
+        ) : Infinity;
         this.reconnect = {
             performed: true,
             connected: true,
@@ -437,7 +569,7 @@ export class MineflayerDriver {
             blocksSurvived,
             inventorySurvived,
             stateRestored: moved < 8,
-            detail: `dropped and rejoined in ${Date.now() - t0}ms; position delta ${moved.toFixed(1)} blocks`,
+            detail: `dropped and rejoined in ${Date.now() - t0}ms; position delta ${Number.isFinite(moved) ? moved.toFixed(1) : 'unknown'} blocks`,
         };
         this.phaseInfo.reconnect = this.reconnect;
     }
@@ -451,7 +583,7 @@ export class MineflayerDriver {
             }, 'air');
             if (read === b.name) ok += 1;
         }
-        return ok > 0;
+        return ok === blocks.length;
     }
 
     /* ------------------------------------------------------------ snapshot */
@@ -470,7 +602,7 @@ export class MineflayerDriver {
             return { ...b, actual: read, confirmed: read === b.name };
         });
         return {
-            connected: !!bot.entity && !!bot?.ready,
+            connected: this.connected === true && !!bot.entity && !!bot?.ready && !this.lastConnectionError,
             serverVersion: this.info.serverVersion ?? bot.version ?? null,
             protocol: bot.protocolVersion ?? null,
             latencyMs: this.info.latencyMs ?? null,
@@ -494,15 +626,42 @@ export class MineflayerDriver {
         };
     }
 
-    async teardown() {
-        if (!this.bot) return;
-        try {
-            safe(() => this.bot.pathfinder?.stop?.());
-            safe(() => this.bot.quit('live integration test complete'));
-        } finally {
-            this.bot = null;
-        }
+    async _destroyBot(bot) {
+        if (!bot) return;
+        // Keep an error listener while the client is being deliberately closed;
+        // removing it before socket teardown can turn a late EPIPE into an
+        // uncaught EventEmitter error. The operation's real error was already
+        // recorded by the lifecycle handler.
+        const teardownError = () => { };
+        bot.on?.('error', teardownError);
+        if (bot === this.bot) this._detachLifecycle();
+        this.connected = false;
+        safe(() => bot.interrupt_code = true);
+        safe(() => bot.pathfinder?.stop?.());
+        safe(() => bot.collectBlock?.cancelTask?.());
+        safe(() => bot.quit('live integration test stopped'));
+        safe(() => bot._client?.end?.());
+        safe(() => bot._client?.destroy?.());
+        if (bot === this.bot) this.bot = null;
+        await sleep(this.cfg.teardownWaitMs ?? 100);
+        bot.removeListener?.('error', teardownError);
     }
+
+    async abort({ phase, error }) {
+        this.log.error?.(`[live] stopping Mineflayer after ${phase?.id || 'phase'} failure: ${error?.message || error}`);
+        await this._destroyBot(this.bot);
+    }
+
+    async teardown() {
+        await this._destroyBot(this.bot);
+    }
+}
+
+function inventoryDelta(before = {}, after = {}) {
+    const names = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+    return [...names]
+        .map((item) => ({ item, delta: (after[item] || 0) - (before[item] || 0) }))
+        .filter((entry) => entry.delta !== 0);
 }
 
 function safe(fn, fallback = undefined) {

@@ -56,9 +56,19 @@ if (-not $DataDir) {
     $envDir = $env:MINDCRAFT_LIVE_SERVER_DIR
     $DataDir = if ($envDir) { $envDir } else { Join-Path ".live" "mc-server" }
 }
+# Resolve once, before any download or Java invocation. This keeps the Windows
+# path native and independent of Git Bash/MSYS path conversion or repository
+# line-ending settings.
+if (-not [System.IO.Path]::IsPathRooted($DataDir)) {
+    $DataDir = Join-Path (Get-Location).Path $DataDir
+}
+$DataDir = [System.IO.Path]::GetFullPath($DataDir)
 
 # ---- safety checks (configuration first, consent last) --------------------
 # -OnlineMode is typed [bool], so the coercion is enforced by the parameter binder.
+if ($Port -lt 1 -or $Port -gt 65535) {
+    Stop-WithReason "-Port must be between 1 and 65535"
+}
 if ($Lan -and -not $OnlineMode) {
     Stop-WithReason "refusing to bind 0.0.0.0 with online-mode=false: an unauthenticated server on your LAN can be joined and controlled by anyone on that network. Use -OnlineMode `$true, or drop -Lan."
 }

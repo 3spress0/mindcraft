@@ -24,12 +24,10 @@ import {
     classifyHost,
     HOST_KIND,
     evaluateNetworkGate,
-    validateAuthorizationRecord,
     evaluateCredentialGate,
     redactSecrets,
     parseLeakedHashes,
     sha256,
-    TOS_ACK_PHRASE,
 } from '../src/agent/live/gates.js';
 import { resolvePlan, bindVerifySpec, PHASES, FEATURES } from '../src/agent/live/phases.js';
 import { verifySpec } from '../src/agent/live/verify.js';
@@ -41,18 +39,6 @@ const repoRoot = path.resolve(__dirname, '..');
 const CLI = path.join(repoRoot, 'scripts', 'live', 'run_controlled_test.js');
 
 const silent = { log: () => { }, error: () => { } };
-
-const VALID_RECORD = {
-    server: 'bagelsmp.com',
-    automation_permitted: true,
-    no_evasion_confirmed: true,
-    granted_by: 'StaffMember#0',
-    granted_on: '2026-09-01',
-    expires_on: '2099-01-01',
-    channel: 'discord ticket #1',
-    allowed_username: 'nickgurrcrafter5',
-    allowed_ports: [25565],
-};
 
 /* ------------------------------------------------------------------ gates */
 
@@ -68,67 +54,46 @@ test('live gates: host classification decides how careful we must be', () => {
     assert.equal(classifyHost(''), HOST_KIND.PUBLIC, 'unknown host must be treated as public');
 });
 
-test('live gates: loopback is allowed with no ceremony, public host is refused', () => {
+test('live gates: loopback and private hosts are allowed with the expected warnings', () => {
     const local = evaluateNetworkGate({ host: '127.0.0.1', port: 55916, username: 'nickgurrcrafter5', auth: 'offline' });
     assert.equal(local.permitted, true);
     assert.equal(local.mode, 'local');
 
-    const remote = evaluateNetworkGate({ host: 'bagelsmp.com', port: 25565, username: 'nickgurrcrafter5', auth: 'microsoft' });
-    assert.equal(remote.permitted, false);
-    assert.match(remote.problems.join(' '), /--allow-remote/);
-    assert.match(remote.problems.join(' '), /--tos-ack/);
-    assert.match(remote.problems.join(' '), /authorization record/);
+    const lan = evaluateNetworkGate({ host: '192.168.1.40', port: 25565, username: 'nickgurrcrafter5', auth: 'offline' });
+    assert.equal(lan.permitted, true);
+    assert.match(lan.warnings.join(' '), /private\/LAN/);
 });
 
-test('live gates: a public host needs a matching, unexpired staff record', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live-auth-'));
-    const write = (obj) => {
-        const f = path.join(dir, `${obj.allowed_username || 'x'}_${Math.random().toString(36).slice(2)}.json`.replace(/[^a-z0-9_.]/g, '_'));
-        fs.writeFileSync(f, JSON.stringify(obj));
-        return f;
-    };
-    const base = {
-        host: 'bagelsmp.com', port: 25565, username: 'nickgurrcrafter5',
-        auth: 'microsoft', allowRemote: true, tosAck: TOS_ACK_PHRASE,
-    };
-
-    const good = evaluateNetworkGate({ ...base, authorizationPath: write(VALID_RECORD) });
-    assert.equal(good.permitted, true, good.problems.join('; '));
-
-    const wrongUser = evaluateNetworkGate({ ...base, authorizationPath: write({ ...VALID_RECORD, allowed_username: 'someoneelse' }) });
-    assert.equal(wrongUser.permitted, false);
-    assert.match(wrongUser.problems.join(' '), /authorizes account/);
-
-    const expired = evaluateNetworkGate({ ...base, authorizationPath: write({ ...VALID_RECORD, expires_on: '2020-01-01' }) });
-    assert.equal(expired.permitted, false);
-    assert.match(expired.problems.join(' '), /in the past/);
-
-    const notPermitted = evaluateNetworkGate({ ...base, authorizationPath: write({ ...VALID_RECORD, automation_permitted: false }) });
-    assert.equal(notPermitted.permitted, false);
-    assert.match(notPermitted.problems.join(' '), /automation_permitted/);
-
-    const evading = evaluateNetworkGate({ ...base, authorizationPath: write({ ...VALID_RECORD, no_evasion_confirmed: false }) });
-    assert.equal(evading.permitted, false, 'concealing automation from anti-cheat is never authorized');
-
-    const otherHost = evaluateNetworkGate({ ...base, host: 'other-smp.net', authorizationPath: write(VALID_RECORD) });
-    assert.equal(otherHost.permitted, false);
-    assert.match(otherHost.problems.join(' '), /not "other-smp.net"/);
-
-    // record validation is reusable standalone
-    assert.deepEqual(validateAuthorizationRecord(VALID_RECORD, { host: 'bagelsmp.com', username: 'nickgurrcrafter5', port: 25565 }), []);
+test('live gates: an explicitly targeted public host needs no staff record', () => {
+    const remote = evaluateNetworkGate({
+        host: 'testing-environement.aternos.me', port: 28552,
+        username: 'nickgurrcrafter5', auth: 'microsoft', explicitTarget: true,
+    });
+    assert.equal(remote.permitted, true, remote.problems.join('; '));
+    assert.equal(remote.authorization, undefined, 'authorization-record machinery must be gone');
+    assert.equal(remote.problems.some((p) => /staff|tos|authorization/i.test(p)), false);
 });
 
 test('live gates: offline auth and --local-only are never valid on a public server', () => {
-    const offline = evaluateNetworkGate({ host: 'bagelsmp.com', port: 25565, username: 'nickgurrcrafter5', auth: 'offline', allowRemote: true, tosAck: TOS_ACK_PHRASE, authorizationPath: null });
+    const offline = evaluateNetworkGate({
+        host: 'bagelsmp.com', port: 25565, username: 'nickgurrcrafter5',
+        auth: 'offline', explicitTarget: true,
+    });
     assert.equal(offline.permitted, false);
     assert.match(offline.problems.join(' '), /auth=microsoft/);
 
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live-auth-'));
-    const f = path.join(dir, 'ok.json');
-    fs.writeFileSync(f, JSON.stringify(VALID_RECORD));
-    const forced = evaluateNetworkGate({ host: 'bagelsmp.com', port: 25565, username: 'nickgurrcrafter5', auth: 'microsoft', allowRemote: true, tosAck: TOS_ACK_PHRASE, authorizationPath: f, forceLocal: true });
+    const forced = evaluateNetworkGate({
+        host: 'bagelsmp.com', port: 25565, username: 'nickgurrcrafter5',
+        auth: 'microsoft', explicitTarget: true, localOnly: true,
+    });
     assert.equal(forced.permitted, false);
     assert.match(forced.problems.join(' '), /--local-only/);
+
+    const lan = evaluateNetworkGate({
+        host: '192.168.1.40', port: 25565, username: 'nickgurrcrafter5',
+        auth: 'offline', localOnly: true,
+    });
+    assert.equal(lan.permitted, true, 'local-only still allows a private/LAN target');
 });
 
 test('live gates: bad usernames are rejected before wasting a login attempt', () => {
@@ -287,6 +252,11 @@ test('live verify: craft consumes materials and build must be re-readable in-wor
     const craft = verifySpec({ kind: 'inventory_have', item: 'crafting_table', atLeast: 1 }, snap);
     assert.equal(craft.satisfied, true);
     assert.match(craft.evidence, /consumed: oak_log -1/);
+    const preexistingProduct = verifySpec(
+        { kind: 'inventory_have', item: 'crafting_table', atLeast: 1 },
+        { inventory: { crafting_table: 1, oak_log: 1 }, phaseInventoryBefore: { crafting_table: 1, oak_log: 1 } },
+    );
+    assert.equal(preexistingProduct.satisfied, false, 'an existing product with no material transaction is not a craft');
     assert.equal(verifySpec({ kind: 'inventory_have', item: 'furnace', atLeast: 1 }, snap).satisfied, false);
 
     const unconfirmed = verifySpec({ kind: 'blocks_placed', minBlocks: 2 }, snap, { expectBlocks: [{ x: 0, y: 64, z: 0 }, { x: 1, y: 64, z: 0 }] });
@@ -335,12 +305,12 @@ test('live verify: persistence claims read the agent state files, and refuse cor
 test('live runner: refuses to touch the driver when a gate says no', async () => {
     const driver = new SelfTestDriver({ inventory: {} });
     const plan = resolvePlan({ features: [FEATURES.DIRECT, FEATURES.RECOVERY, FEATURES.RECONNECT] });
-    const gate = evaluateNetworkGate({ host: 'bagelsmp.com', port: 25565, username: 'nickgurrcrafter5', auth: 'microsoft' });
+    const gate = evaluateNetworkGate({ host: 'bagelsmp.com', port: 25565, username: 'nickgurrcrafter5', auth: 'microsoft', explicitTarget: false });
     const report = await runControlledTest({ driver, plan, gate, credentialGate: { ok: true }, log: silent });
     assert.equal(report.status, 'aborted_by_gate');
     assert.equal(report.abortedBy, 'network_gate');
     assert.deepEqual(driver.calls, [], 'no phase may run before the gate passes');
-    assert.ok(report.problems.length >= 3);
+    assert.ok(report.problems.some((problem) => /explicit target/.test(problem)));
 });
 
 test('live runner: credential refusal also stops before connect', async () => {
@@ -352,6 +322,18 @@ test('live runner: credential refusal also stops before connect', async () => {
     assert.equal(report.status, 'aborted_by_gate');
     assert.equal(report.abortedBy, 'credential_gate');
     assert.deepEqual(driver.calls, []);
+});
+
+test('live runner: --only executes selected phases only and marks the rest excluded', async () => {
+    const driver = new SelfTestDriver({ inventory: {} });
+    const plan = resolvePlan({ features: [FEATURES.DIRECT], only: ['connect', 'observe', 'report'] });
+    const gate = evaluateNetworkGate({ host: '127.0.0.1', port: 55916, username: 'tester_bot', auth: 'offline' });
+    const report = await runControlledTest({ driver, plan, gate, credentialGate: { ok: true }, log: silent });
+    assert.equal(report.status, 'passed');
+    assert.deepEqual(driver.calls, ['connect', 'observe', 'report', 'teardown']);
+    assert.deepEqual(report.phases.map((phase) => phase.phase), ['connect', 'observe', 'report']);
+    assert.deepEqual(report.excludedPhases.map((phase) => phase.id), ['gather', 'craft', 'build', 'persist']);
+    assert.ok(report.notes.some((note) => /intentionally excluded by --only/.test(note)));
 });
 
 test('live runner: all eight controlled phases verify end to end', async () => {
@@ -465,26 +447,56 @@ test('live CLI: selftest run exits 0 and prints machine-readable report', () => 
     assert.equal(report.gates.credentials.llm, 'disabled');
 });
 
-test('live CLI: refuses a public host with exit code 2 and never connects', () => {
+test('live CLI: an explicitly selected public host passes policy without authorization flags', () => {
     const res = spawnSync('node', [CLI, '--preflight', '--host', 'bagelsmp.com', '--port', '25565', '--username', 'nickgurrcrafter5', '--auth', 'microsoft'], { encoding: 'utf8', cwd: repoRoot, timeout: 30_000 });
-    assert.equal(res.status, 2, res.stdout + res.stderr);
-    assert.match(res.stdout, /network gate:      REFUSED/);
-    assert.match(res.stdout, /--tos-ack authorized-by-server-staff/);
+    assert.equal(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /network gate:\s+PERMITTED/);
+    assert.doesNotMatch(res.stdout, /tos-ack|authorization record|server staff/i);
 
-    const run = spawnSync('node', [CLI, '--driver', 'selftest', '--host', 'bagelsmp.com', '--username', 'nickgurrcrafter5', '--auth', 'microsoft', '--no-report'], { encoding: 'utf8', cwd: repoRoot, timeout: 30_000 });
-    assert.equal(run.status, 2, 'a refused gate must exit non-zero even without --preflight');
-    assert.match(run.stdout, /aborted_by_gate/i);
-    assert.match(run.stderr, /--tos-ack|authorization record/);
+    const offline = spawnSync('node', [CLI, '--preflight', '--host', 'bagelsmp.com', '--username', 'nickgurrcrafter5', '--auth', 'offline'], { encoding: 'utf8', cwd: repoRoot, timeout: 30_000 });
+    assert.equal(offline.status, 2);
+    assert.match(offline.stdout, /auth=microsoft/);
+
+    const implicit = spawnSync('node', [CLI, '--preflight', '--username', 'nickgurrcrafter5', '--auth', 'microsoft'], { encoding: 'utf8', cwd: repoRoot, timeout: 30_000 });
+    assert.equal(implicit.status, 0, implicit.stdout + implicit.stderr);
+    assert.match(implicit.stdout, /host class:\s+loopback/);
 });
 
-test('live CLI: --print-plan lists each phase with its conservative timeout', () => {
-    const res = spawnSync('node', [CLI, '--print-plan', '--driver', 'selftest', '--features', 'direct,recovery', '--no-report', '--quiet'], { encoding: 'utf8', cwd: repoRoot, timeout: 30_000 });
+test('live CLI: --print-plan exits before driver construction or connection', () => {
+    // Mineflayer dependencies are intentionally not needed for this mode. If
+    // this accidentally built the driver, this checkout would fail here.
+    const res = spawnSync('node', [CLI, '--print-plan', '--driver', 'mineflayer', '--features', 'direct,recovery', '--no-report', '--quiet'], { encoding: 'utf8', cwd: repoRoot, timeout: 30_000 });
     assert.equal(res.status, 0, res.stderr);
     for (const id of ['connect', 'observe', 'report', 'gather', 'craft', 'build', 'recovery', 'persist']) {
         assert.match(res.stdout, new RegExp(`^\\s+${id}\\s+\\d+\\.\\ds`, 'm'), `${id} should be listed with a timeout`);
     }
     assert.match(res.stdout, /budget: \d+\.\ds total/);
     assert.match(res.stdout, /llm:         disabled/);
+    assert.doesNotMatch(res.stdout, /resolved target:.*connected|Mineflayer client|phase 1/i);
+
+    const bad = spawnSync('node', [CLI, '--print-plan', '--driver', 'mineflayer', '--features', 'not-a-feature', '--no-report'], { encoding: 'utf8', cwd: repoRoot, timeout: 30_000 });
+    assert.equal(bad.status, 1, bad.stdout + bad.stderr);
+    assert.match(bad.stdout + bad.stderr, /unknown feature/);
+});
+
+test('live CLI: --only executes exactly selected phases and reports exclusions', () => {
+    const res = spawnSync('node', [CLI, '--driver', 'selftest', '--features', 'direct', '--only', 'connect,observe,report', '--json', '--no-report'], { encoding: 'utf8', cwd: repoRoot, timeout: 30_000 });
+    assert.equal(res.status, 0, res.stderr);
+    const report = JSON.parse(res.stdout);
+    assert.deepEqual(report.phases.map((phase) => phase.phase), ['connect', 'observe', 'report']);
+    assert.deepEqual(report.selectedPhases, ['connect', 'observe', 'report']);
+    assert.deepEqual(report.excludedPhases.map((phase) => phase.id), ['gather', 'craft', 'build', 'persist']);
+    assert.ok(report.notes.some((note) => /intentionally excluded by --only/.test(note)));
+    assert.equal(report.status, 'passed');
+});
+
+test('live CLI: --from-settings resolves the configured target without a driver', () => {
+    const res = spawnSync('node', [CLI, '--print-plan', '--from-settings', '--driver', 'selftest', '--features', 'direct', '--no-report'], { encoding: 'utf8', cwd: repoRoot, timeout: 30_000 });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /host:\s+127\.0\.0\.1/);
+    assert.match(res.stdout, /port:\s+55916/);
+    assert.match(res.stdout, /auth:\s+offline/);
+    assert.match(res.stdout, /Minecraft version:\s+auto/);
 });
 
 test('live CLI: unknown options and bad features fail loudly', () => {
