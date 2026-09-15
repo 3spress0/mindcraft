@@ -11,13 +11,13 @@ jobs:
     name: Test on Node.js 24
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Node 24 is the supported runtime for the whole project (see .nvmrc).
       # setup-node reads the version from .nvmrc so CI can never drift from
       # local development or Codespaces.
       - name: Use Node.js from .nvmrc
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
 
@@ -56,6 +56,6 @@ jobs:
     name: Docker image build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build image
         run: docker build -t mindcraft-test .
