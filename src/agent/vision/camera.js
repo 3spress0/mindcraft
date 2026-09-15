@@ -25,7 +25,11 @@ export class Camera extends EventEmitter {
         this.viewer = new Viewer(this.renderer);
         this._init().then(() => {
             this.emit('ready');
-        })
+        }).catch((err) => {
+            // Avoid an unhandled rejection (fatal on modern Node) if world
+            // loading fails; vision simply stays unavailable.
+            console.warn('Camera initialization failed:', err);
+        });
     }
   
     async _init () {

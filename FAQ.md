@@ -8,16 +8,11 @@
 
 - Many issues are caused by out-of-date node module patches, especially after updates. A catch-all is to delete the `node_modules` folder, and run `npm install`
 
-- **`npm install` fails with Python or C++ build errors**: This typically happens when building native modules like `gl`. Common solutions:
+- **`npm install` fails with Python or C++ build errors**: This happens when the optional native modules (`gl`/`canvas`, used only for bot screenshots and vision) compile from source. This project targets **Node.js 24** and pins `gl` to the actively maintained 9.x series, which supports current Node versions — do not downgrade Node to fix this.
+  - Make sure you are on Node.js 24 (`node --version`, or `nvm install && nvm use` to follow `.nvmrc`).
   - **Python not found** (macOS/Linux): If you see `python: command not found`, create a symlink: `sudo ln -s $(which python3) /usr/local/bin/python`
-  - **C++20 errors or Node version issues**: If you see `"C++20 or later required"` errors, you're likely using Node v24 or newer. The `gl` package requires Node LTS (v18 or v20). Switch versions using:
-    ```bash
-    nvm install 20
-    nvm use 20
-    rm -rf node_modules package-lock.json
-    npm install
-    ```
-  - **Skip optional packages**: If you don't need the vision feature (disabled by default), you can skip the problematic `gl` package: `npm install --no-optional`
+  - Install the native build prerequisites for your OS (see "Native dependencies" in the README). The Docker image and Codespaces devcontainer already include them.
+  - **Skip optional packages**: If you don't need the vision feature (disabled by default), you can skip the `gl` package entirely: `npm install --no-optional`. Mindcraft installs and runs fine without it; only screenshot capture is unavailable.
 
 - `My brain disconnected, try again`: Something is wrong with the LLM api. You may have the wrong API key, exceeded your rate limits, or other. Check the program outputs for more details.
   

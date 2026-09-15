@@ -1,6 +1,6 @@
 # Specify a base image
 # FROM ubuntu:22.04
-FROM node:18
+FROM node:24-bookworm
 
 #Install some dependencies
 
@@ -12,6 +12,11 @@ RUN apt-get -y install python3-pip
 RUN apt-get -y install python3-boto3
 RUN apt-get -y install python3-tqdm
 RUN apt-get -y install tmux
+# Native build prerequisites for the headless-rendering deps (gl/canvas)
+RUN apt-get -y install build-essential \
+    libgl1-mesa-dev libgles2-mesa-dev libosmesa6-dev \
+    libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev \
+    libxi-dev libxinerama-dev libxrandr-dev
 
 RUN git clone https://github.com/mindcraft-bots/mindcraft.git /mindcraft
 WORKDIR /mindcraft

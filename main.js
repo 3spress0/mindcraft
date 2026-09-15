@@ -4,6 +4,14 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { readFileSync } from 'fs';
 
+// Mindcraft targets Node.js 24 (LTS). See .nvmrc and package.json "engines".
+const SUPPORTED_NODE_MAJOR = 24;
+const nodeMajor = Number(process.versions.node.split('.')[0]);
+if (nodeMajor < SUPPORTED_NODE_MAJOR) {
+    console.warn(`[mindcraft] Warning: Node.js ${SUPPORTED_NODE_MAJOR}+ is the supported runtime, but this process is running ${process.version}.`);
+    console.warn('[mindcraft] Some native dependencies may fail to load or install. Use the version in .nvmrc (e.g. "nvm use") or run via Docker/Codespaces.');
+}
+
 function parseArguments() {
     return yargs(hideBin(process.argv))
         .option('profiles', {

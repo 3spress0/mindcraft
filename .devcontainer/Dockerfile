@@ -1,15 +1,13 @@
-FROM node:24-bookworm-slim
+# Codespaces / VS Code Dev Containers for Mindcraft.
+# Node.js 24 matches .nvmrc, package.json engines, CI, and the project Dockerfile.
+FROM mcr.microsoft.com/devcontainers/javascript-node:1-24-bookworm
 
-ENV DEBIAN_FRONTEND=noninteractive
-
+# Native build prerequisites for the optional headless-rendering stack
+# (gl / node-canvas / node-canvas-webgl), mirroring the project Dockerfile.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    # git \
-    # unzip \
     python3 \
     python-is-python3 \
-    python3-pip \
-    # tmux \
     xvfb \
     xauth \
     libgl1-mesa-dev \
@@ -25,13 +23,3 @@ RUN apt-get update && \
     libxinerama-dev \
     libxrandr-dev \
     && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-COPY package.json .npmrc ./
-COPY patches ./patches
-RUN npm install
-
-COPY . .
-
-CMD ["npm", "start"]
