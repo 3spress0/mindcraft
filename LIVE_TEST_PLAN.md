@@ -15,7 +15,7 @@ Local real-Minecraft server     ← stage 2, this document
         ↓
 Live bot integration (direct)   ← stage 3, protocol layer only, zero API calls
         ↓
-BagelSMP controlled test        ← stage 4, BLOCKED until staff permission exists
+Explicit remote target (owned/private or permitted public server) ← stage 4
         ↓
 Longer autonomous tasks         ← stage 5
         ↓
@@ -104,66 +104,60 @@ Rules baked into the harness, so the results are not cosmetic:
 - every phase has its own conservative timeout plus an optional global `--deadline`;
   start at `--timeout-scale 1`, only shrink after a green run.
 
-## Stage 4 (BagelSMP) is gated on permission, not on confidence
+## Stage 4: an explicitly selected remote target
 
-`bagelsmp.com` is somebody else's production server with other players on it.
-Before the first remote run, all of these must be true — the harness enforces
-them and there is no flag that skips them:
+A remote target is allowed when the user explicitly selects it with `--host` (or
+explicitly opts into `--from-settings`). The harness does not require a staff
+authorization JSON file, `--tos-ack`, or an `--allow-remote` flag. This is not an
+anti-cheat or server-rules bypass: only connect to a server you own or to a
+server whose rules permit automated clients, keep the bot visibly automated, and
+do not conceal its identity or evade anti-cheat/security controls.
 
-1. **Ask the staff.** In a public channel or ticket, so the answer is on record:
-   > "I'd like to connect a Mineflayer test bot (account: `nickgurrcrafter5`) to
-   > BagelSMP for a short, scripted integration test: join, read nearby world
-   > state, mine one log, craft one crafting table, place 4 blocks in one spot,
-   > then leave. It will be visibly a bot, will not hide that it is automated,
-   > will not evade anti-cheat, will not use cheats or macros, and will run in a
-   > quiet area. Is that permitted, and are there any restrictions (world/region,
-   > time window, rate, must-stand-in-creative)?"
-2. Record the answer in a file **outside** the repo (default `.live/authorization.json`,
-   gitignored):
-   ```json
-   {
-     "server": "bagelsmp.com",
-     "automation_permitted": true,
-     "no_evasion_confirmed": true,
-     "granted_by": "<staff member named in the reply>",
-     "granted_on": "2026-09-14",
-     "expires_on": "2026-12-31",
-     "channel": "<where it was said>",
-     "policy_ref": "<link to the rules page that allows it>",
-     "allowed_username": "nickgurrcrafter5",
-     "allowed_ports": [25565]
-   }
-   ```
-3. Run it, and only then:
-   ```bash
-   node scripts/live/run_controlled_test.js --driver mineflayer \
-     --host bagelsmp.com --port 25565 --auth microsoft --username nickgurrcrafter5 \
-     --allow-remote --tos-ack authorized-by-server-staff \
-     --authorization .live/authorization.json \
-     --features direct --timeout-scale 2
-   ```
-   The gate checks the record's host, port and account against the actual
-   target, requires `auth=microsoft` (never `offline` on someone else's server),
-   and refuses expired records. `--local-only` pins you to non-public hosts.
+Remote targets must use a valid Minecraft account and `--auth microsoft`;
+`--auth offline` is rejected for public/remote hosts. `--local-only` rejects
+public hosts while still allowing loopback and private/LAN targets. Private
+addresses receive an ownership warning. An implicit/default loopback target is
+never promoted to a remote target by accident.
 
-If staff say no, or do not reply: **that is the answer.** Stay on the local
-server. A useful substitute is a local Paper server running the same protocol
-version and the same plugin *types* the target uses, or a private owned SMP you
-can whitelist on. Do not: spoof a normal client, hide the bot's identity,
-route around rate limits or anti-cheat, use alt accounts to dodge a ban, or
-join during a populated time window "because it's quick". Any of those turn a
-test into an incident on other people's server, and every measurement after it
-is suspect anyway.
-
-Start with one tiny task (phase 1 only, then 1–3), never the full pipeline on
-the first remote run, and re-check the gate after any change of account, port or
-server:
+The first remote run should be read-only protocol observation so that a server
+startup or authentication problem cannot create a misleading mutation report:
 
 ```bash
-node scripts/live/run_controlled_test.js --preflight --host bagelsmp.com --port 25565 \
-  --username nickgurrcrafter5 --auth microsoft --allow-remote \
-  --tos-ack authorized-by-server-staff --authorization .live/authorization.json
+node scripts/live/run_controlled_test.js --preflight \
+  --host testing-environement.aternos.me --port 28552 \
+  --username nickgurrcrafter5 --auth microsoft --features direct \
+  --only connect,observe,report
+
+node scripts/live/run_controlled_test.js --driver mineflayer \
+  --host testing-environement.aternos.me --port 28552 \
+  --username nickgurrcrafter5 --auth microsoft --features direct \
+  --only connect,observe,report
 ```
+
+The resolved host, port, account, auth mode, Minecraft version, selected
+features, and selected phases are printed before Mineflayer is constructed. No
+credential is printed. If the target is offline, still starting, or rejects
+Microsoft authentication, the run fails with that actual connection result; do
+not report it as a pass.
+
+PowerShell uses the same Node CLI and does not need Bash:
+
+```powershell
+node scripts/live/run_controlled_test.js --driver mineflayer `
+  --host testing-environement.aternos.me --port 28552 `
+  --username nickgurrcrafter5 --auth microsoft --features direct `
+  --only connect,observe,report
+```
+
+For a first test against a server you do not administer, check its rules before
+connecting. Never spoof a normal client, hide the bot's identity, route around
+rate limits or anti-cheat, use alt accounts to dodge a ban, or join during a
+populated time window because it is quick.
+
+`--print-plan` displays the same target/gate/credential/plan information and
+then exits before driver construction, phase execution, or any network socket.
+`--only connect,observe,report` executes exactly those three phases; the report
+labels all other runnable phases as intentionally excluded, not failed.
 
 ## Credentials: the exposed OpenRouter key must not touch the live bot
 
@@ -240,8 +234,8 @@ Two properties make this testable rather than aspirational:
 - `--driver selftest` (and `selftest_driver.js`) is a harness test, not a live
   test; its green report says nothing about Minecraft and must never be quoted
   as a live result.
-- `results/live/` and `.live/` are gitignored. No world saves, no keys, no
-  staff-contact records in git.
+- `results/live/` and `.live/` are gitignored. No world saves, API keys,
+  authentication caches, or other local credentials belong in git.
 - In-game chat logging, `only_chat_with`, and `chat_ingame` are production
   behaviour: for a public run, decide explicitly whether the bot should talk to
   players at all before you join (default for remote runs: leave them alone).

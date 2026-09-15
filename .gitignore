@@ -33,5 +33,5 @@ server_data*
 **/.DS_Store
 src/mindcraft-py/__pycache__/
 
-# live integration testing scratch: local server world files, reports, staff auth record
+# live integration testing scratch: local server worlds, caches, and credentials
 .live/

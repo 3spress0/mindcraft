@@ -29,6 +29,7 @@ export class SelfTestDriver {
         this.health = 20;
         this.food = 20;
         this.persisted = null;
+        this.phaseInfo = {};
     }
 
     /**
@@ -88,11 +89,19 @@ export class SelfTestDriver {
     async craft({ task }) {
         await this._record('craft');
         const item = task.craft.item;
+        const before = { ...this.inventory };
         if (item === 'crafting_table' && (this.inventory.oak_log || 0) >= 1) {
             this.inventory.oak_log -= 1;
             this.inventory.oak_planks = (this.inventory.oak_planks || 0) + 4;
             this.inventory.crafting_table = (this.inventory.crafting_table || 0) + 1;
         }
+        const consumed = Object.entries(before)
+            .map(([name, count]) => ({ item: name, delta: (this.inventory[name] || 0) - count }))
+            .filter((entry) => entry.delta < 0);
+        this.phaseInfo.craft = {
+            productGain: (this.inventory[item] || 0) - (before[item] || 0),
+            consumed,
+        };
         return { ok: true, simulated: true };
     }
 
@@ -180,6 +189,7 @@ export class SelfTestDriver {
             expectedBlocks: this.planned,
             recovery: this.state.recovery,
             reconnect: this.state.reconnect,
+            phaseInfo: this.phaseInfo,
         };
     }
 

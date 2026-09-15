@@ -180,14 +180,16 @@ Before connecting an autonomous bot to a public server, verify that automated cl
 
 Do not use the bot to bypass anti-cheat, anti-bot, authentication, or other server security mechanisms.
 
-The live integration harness enforces the same rule mechanically: a non-local server is refused unless staff permission is recorded in an authorization file naming the account, host, port, and who approved automation. There is no flag that skips that gate.
+The live integration harness permits a remote target when the user explicitly selects it with `--host` (or explicitly uses `--from-settings`). It does not require a staff authorization JSON record, `--tos-ack`, or an `--allow-remote` flag. Remote targets still require a valid Minecraft username and `--auth microsoft`; `--auth offline` is rejected remotely. `--local-only` continues to refuse public hosts, and private/LAN targets receive an ownership warning.
+
+Do not connect to a server unless its rules permit automated clients. Do not bypass anti-cheat, anti-bot, authentication, or other server security mechanisms, and do not conceal that the client is a bot. Direct protocol-only runs must not load an LLM key.
 
 ```bash
 node scripts/live/run_controlled_test.js --preflight --host <server> --port <port> \
-  --username <bot-account> --auth microsoft
+  --username <bot-account> --auth microsoft --features direct
 ```
 
-See [LIVE_TEST_PLAN.md](LIVE_TEST_PLAN.md) for the permission record format and the staged test ramp.
+See [LIVE_TEST_PLAN.md](LIVE_TEST_PLAN.md) for the staged ramp, PowerShell workflow, verification rules, and secret-safety requirements.
 
 # Tasks
 
@@ -635,7 +637,10 @@ Run it in stages:
 node scripts/live/run_controlled_test.js --preflight
 node scripts/live/run_controlled_test.js --driver selftest
 node scripts/live/run_controlled_test.js --driver mineflayer --host 127.0.0.1 --port 55916 --auth offline --username <bot-account> --features direct
+node scripts/live/run_controlled_test.js --print-plan --driver mineflayer --features direct --only connect,observe,report
 ```
+
+`--print-plan` prints the resolved target, gates, credentials status, selected plan, and exclusions, then exits before constructing a driver or opening a socket. `--only connect,observe,report` runs exactly those phases; the report marks the other runnable phases as intentionally excluded.
 
 Each phase passes only when the world state actually changed; a phase that cannot be observed is not auto-passed, and a failing mutating phase stops later mutating phases instead of compounding damage. `--features direct` uses no LLM key at all, so the first live runs cost no API calls.
 

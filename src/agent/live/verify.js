@@ -85,7 +85,7 @@ export function verifySpec(spec, snapshot, ctx = {}) {
                 checks.push(ok('gather target configured', 'no item specified', false));
                 break;
             }
-            const before = num((s.inventoryBefore || {})[item]) ?? 0;
+            const before = num((s.phaseInventoryBefore ?? s.inventoryBefore ?? {})[item]) ?? 0;
             const after = num((s.inventory || {})[item]) ?? 0;
             const gained = Math.max(0, after - before);
             checks.push(ok(`inventory:${item}`, `+${gained} (before ${before}, after ${after}, need >= ${need})`, gained >= need));
@@ -98,12 +98,15 @@ export function verifySpec(spec, snapshot, ctx = {}) {
                 checks.push(ok('craft target configured', 'no item specified', false));
                 break;
             }
+            const beforeInventory = s.phaseInventoryBefore ?? s.inventoryBefore ?? {};
+            const before = num(beforeInventory[item]) ?? 0;
             const have = num((s.inventory || {})[item]) ?? 0;
-            const consumed = Object.entries(s.inventoryBefore || {})
+            const productGain = have - before;
+            const consumed = Object.entries(beforeInventory)
                 .filter(([name, count]) => (num(s.inventory?.[name]) ?? 0) < count)
                 .map(([name, count]) => `${name} -${count - (num(s.inventory?.[name]) ?? 0)}`)
                 .slice(0, 8);
-            checks.push(ok(`inventory:${item}`, `have ${have} (need >= ${need})${consumed.length ? `; consumed: ${consumed.join(', ')}` : ''}`, have >= need));
+            checks.push(ok(`inventory:${item}`, `gain +${productGain} (before ${before}, after ${have}, need >= ${need})${consumed.length ? `; consumed: ${consumed.join(', ')}` : ''}`, productGain >= need && consumed.length > 0));
             break;
         }
         case 'blocks_placed': {
@@ -146,9 +149,14 @@ export function verifySpec(spec, snapshot, ctx = {}) {
             if (spec.gatherAccounting?.item) {
                 const { item, min } = spec.gatherAccounting;
                 const held = num(s.inventory?.[item]) ?? 0;
-                const built = placed.filter((x) => x.confirmed === true).length;
+                const built = placed.filter((x) => x.confirmed === true && x.name === item).length;
+                const craft = s.phaseInfo?.craft;
+                const transformed = Array.isArray(craft?.consumed)
+                    && craft.consumed.some((entry) => entry.item === item && Number(entry.delta) < 0)
+                    && Number(craft.productGain) > 0;
                 const need = num(min) ?? 0;
-                checks.push(ok(`resource ${item} accounted for`, `held ${held} + built ${built} = ${held + built} (need >= ${need}; a gap means the server voided or duplicated it)`, held + built >= need));
+                const accounted = held + built >= need || transformed;
+                checks.push(ok(`resource ${item} accounted for`, `held ${held} + matching blocks ${built} = ${held + built}${transformed ? '; transformed by a verified craft transaction' : ''} (need >= ${need}; a gap means the server voided or duplicated it)`, accounted));
             }
             const files = Array.isArray(s.persistence) ? s.persistence : [];
             const present = files.filter((f) => f.present !== false);
