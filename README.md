@@ -570,6 +570,33 @@ already sends for the bot's own inventory.
 !replaceTool iron_pickaxe
 ```
 
+# Autonomous Task Loop
+
+`src/agent/autonomy/` gives the bot a deliberate, needs-driven idle loop —
+the "larger autonomous behavior" stage of the progression. It complements
+(but never overrides) user commands, LLM self-prompting, and survival modes.
+
+* **Needs scoring** — while idle, the loop builds a state snapshot and scores
+  needs by urgency: broken/nearly-dead tools (replace), nearly-full inventory
+  (advisory until an unload executor exists), and frontier exploration after
+  long idle. Night dampens exploration urgency.
+* **Guardrails** — runs only when truly idle (no action, no conversation, no
+  self-prompting), personality-paced cooldown between runs, a hard action
+  timeout, and a bounded history. Executors catch their own errors; the loop
+  itself never throws.
+* **Interruptible** — every action runs through the normal action manager
+  (`autonomy:*` labels), so `!stop` and new user messages interrupt it, and
+  the behavior FSM tracks it like any other activity.
+
+```text
+!autonomyStatus        # on/off, cooldown, last run, current needs, history
+!setAutonomy off       # pause the loop; "on" resumes it
+```
+
+Configuration lives under `settings.autonomy` (`enabled`, `cooldown_s`,
+`action_timeout_s`, and per-need thresholds like `tool_replace_threshold`,
+`explore_when_idle`, `explore_idle_s`).
+
 # Legit Awareness (Radar)
 
 Borrowing the *information* side of utility clients like Meteor Client and

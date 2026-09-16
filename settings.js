@@ -167,6 +167,23 @@ const settings = {
         }
     },
 
+    // Autonomous task loop (src/agent/autonomy/). While the bot is idle it
+    // periodically scores its needs and acts on the most urgent one through
+    // the normal action manager, so everything stays interruptible.
+    "autonomy": {
+        "enabled": true,            // master switch; !setAutonomy toggles it at runtime
+        "cooldown_s": [20, 60],     // personality-paced seconds between loop runs
+        "action_timeout_s": 180,    // hard cap on a single autonomous action
+        "history_limit": 16,        // bounded history kept for !autonomyStatus
+        "needs": {
+            "tool_replace_threshold": 0.15, // durability fraction that triggers replacement
+            "explore_when_idle": true,      // frontier-explore when idle long enough
+            "explore_idle_s": 60,           // seconds of idle before exploring
+            "explore_legs": 2,              // outward legs per autonomous exploration
+            "free_slot_alert": 2            // advisory when inventory has <= this many free slots
+        }
+    },
+
 
     "log_all_prompts": false, // log ALL prompts to file
     "show_chat_history": true, // stream and persist Runtime chat/tool events for the web UI

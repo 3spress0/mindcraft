@@ -24,6 +24,7 @@ import { getStorageIndex } from './storage/index.js';
 import { createPersonality } from './humanlike/personality.js';
 import { BehaviorStateMachine } from './humanlike/behavior_state.js';
 import { AttentionTracker } from './humanlike/attention.js';
+import { AutonomyLoop } from './autonomy/task_loop.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
@@ -164,6 +165,17 @@ export class Agent {
             this.personality = createPersonality({ name: this.name || 'mindcraft' });
             this.behavior_state = new BehaviorStateMachine();
             this.attention = new AttentionTracker();
+        }
+
+        // Autonomous task loop: evaluates needs while idle and acts on the
+        // most urgent one (see src/agent/autonomy/). Runs through the normal
+        // action manager so it stays fully interruptible.
+        try {
+            this.autonomy = new AutonomyLoop(this);
+            this.bot._autonomy = this.autonomy;
+        } catch (e) {
+            console.error('Autonomy loop init failed:', e);
+            this.autonomy = null;
         }
 
         this.bot.on('login', () => {
@@ -899,6 +911,8 @@ export class Agent {
         await this.bot.modes.update();
         this.self_prompter.update(delta);
         this.observation_collector?.tick?.();
+        // fire-and-forget: the loop is self-guarding (cooldown + _running flag)
+        this.autonomy?.tick?.().catch(() => {});
         await this.checkTaskDone();
     }
 

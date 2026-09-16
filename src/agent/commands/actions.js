@@ -681,6 +681,19 @@ export const actionsList = [
         })
     },
     {
+        name: '!setAutonomy',
+        description: 'Enable or disable the autonomous task loop that acts on the bot\'s needs (tool replacement, frontier exploration) while it is idle.',
+        params: {
+            'state': { type: 'string', description: '"on" or "off".' },
+        },
+        perform: async function (agent, state) {
+            if (!agent.autonomy) return 'Autonomy loop not initialized.';
+            const on = String(state).toLowerCase() === 'on';
+            agent.autonomy.setRuntimeEnabled(on);
+            return `Autonomy loop ${on ? 'enabled' : 'disabled'}.`;
+        }
+    },
+    {
         name: '!replaceTool',
         description: 'Replace a worn or broken tool: equips the healthiest spare from the inventory, or crafts a fresh one if materials are available.',
         params: {

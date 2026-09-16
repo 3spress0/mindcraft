@@ -546,7 +546,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 
 ### Long-term autonomy
 
-* [x] Autonomous exploration — `!explore` walks to unvisited frontier chunks on an expanding ring
+* [x] Autonomous exploration — `!explore` + the autonomy loop frontier-explores when idle long enough
 * [~] Autonomous resource gathering — npc item goals; not self-initiated
 * [x] Autonomous crafting — npc item_goal chains
 * [x] Autonomous building — npc build_goal
@@ -554,12 +554,13 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Autonomous storage management
 * [ ] Autonomous base maintenance
 * [x] Autonomous recovery
-* [x] Autonomous task selection — self-prompter + npc goals
+* [x] Autonomous task selection — self-prompter + npc goals + needs-driven autonomy loop
+* [x] Autonomous task loop — `src/agent/autonomy/`: idle needs scoring (tool replacement, exploration), personality-paced cooldown, bounded history, `!autonomyStatus` / `!setAutonomy`
 * [x] Long-running goals — npc projects
 * [~] Multiple simultaneous objectives — modes concurrent; one action at a time
-* [~] Background maintenance tasks — modes act as maintenance behaviors
+* [x] Background maintenance tasks — autonomy loop replaces worn tools and explores while idle; modes handle survival
 * [ ] Self-maintained resource reserves
-* [ ] Self-maintained equipment
+* [x] Self-maintained equipment — autonomy loop auto-replaces broken/nearly-dead tools
 * [ ] Self-maintained food supply
 * [~] Self-maintained base — construction_damage repair; not proactive
 
@@ -629,5 +630,8 @@ machine, LOS-gated attention, interaction focus/timing, context-dependent
 idle), navigation intelligence has landed in `src/agent/navigation/`
 (hazard-aware `safe` profile, route caching with world-verified replay, and
 frontier exploration), and tool durability awareness + replacement planning
-is wired through mining in `src/agent/library/durability.js`. Remaining
-frontier: social behavior profiles and the larger autonomous task loop.
+is wired through mining in `src/agent/library/durability.js`, and the
+autonomous task loop now runs in `src/agent/autonomy/` (idle needs scoring,
+auto tool replacement, frontier exploration, bounded history). Remaining
+frontier: social behavior profiles, autonomous storage/farming management,
+and self-maintained reserves.

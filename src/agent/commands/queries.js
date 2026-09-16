@@ -263,6 +263,14 @@ export const queryList = [
         }
     },
     {
+        name: "!autonomyStatus",
+        description: "Show the autonomous task loop status: on/off, cooldown, last run, current needs, and recent action history. Use !setAutonomy to toggle.",
+        perform: function (agent) {
+            if (!agent.autonomy) return pad('Autonomy loop not initialized.');
+            return pad(agent.autonomy.summarize());
+        }
+    },
+    {
         name: "!previewPath",
         description: "Preview a path to the given coordinates WITHOUT moving (Baritone #calc): reports whether a path exists and how long it is under the current movement profile.",
         params: {
@@ -365,6 +373,10 @@ export const queryList = [
                 const attn = agent.attention?.summarize?.();
                 if (attn) lines.push(`Attention: ${attn.players} player(s), ${attn.mobs} mob(s), ${attn.items} item(s) seen recently`);
                 if (agent.personality) lines.push(`Personality: ${agent.personality.preset} (seed ${agent.personality.seed})`);
+                if (agent.autonomy) {
+                    const last = agent.autonomy.lastRun;
+                    lines.push(`Autonomy: ${agent.autonomy.enabled ? 'on' : 'off'}${last ? `, last=${last.kind}` : ''}`);
+                }
             } catch { /* behavior layer optional */ }
 
             // Navigation (Baritone layer)
