@@ -27,6 +27,7 @@ import { AttentionTracker } from './humanlike/attention.js';
 import { AutonomyLoop } from './autonomy/task_loop.js';
 import { PlayerLedger } from './social/player_ledger.js';
 import { MetricsTracker, causeFromDeathMessage } from './library/metrics.js';
+import { MentalMap } from './memory/mental_map.js';
 import { ReactionGate, detectSocialEvents, reactionMessage } from './social/reactions.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
@@ -201,6 +202,17 @@ export class Agent {
         } catch (e) {
             console.error('Metrics init failed:', e);
             this.metrics = null;
+        }
+
+        // Mental map: durable POI notes (villages, houses, bases...) the LLM
+        // can author with !notePlace and read via !memory / !pois.
+        try {
+            this.mental_map = new MentalMap({ botName: this.name || 'bot' });
+            this.bot._mental_map = this.mental_map;
+            this.mental_map.seedFromAgent(this);
+        } catch (e) {
+            console.error('Mental map init failed:', e);
+            this.mental_map = null;
         }
 
         this.bot.on('login', () => {
@@ -893,6 +905,12 @@ export class Agent {
             if (jsonMsg.translate && jsonMsg.translate.startsWith('death') && message.startsWith(this.name)) {
                 console.log('Agent died: ', message);
                 try { this.metrics?.setLastCause(causeFromDeathMessage(message, this.name)); } catch { /* optional */ }
+                try {
+                    const dpos = this.bot.entity?.position;
+                    if (dpos) {
+                        this.mental_map?.note(dpos, { name: 'last-death', type: 'death', source: 'observed', notes: causeFromDeathMessage(message, this.name) });
+                    }
+                } catch { /* mental map must never break death handling */ }
                 let death_pos = this.bot.entity.position;
                 this.memory_bank.rememberPlace('last_death_position', death_pos.x, death_pos.y, death_pos.z);
                 let death_pos_text = null;

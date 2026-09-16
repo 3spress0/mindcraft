@@ -12,6 +12,8 @@ import { explore } from '../navigation/exploration.js';
 import { replaceTool } from '../library/durability.js';
 import { RISK_PRESETS } from '../humanlike/personality.js';
 import { getSpotRegistry } from '../storage/placement.js';
+import { getMentalMap, POI_TYPES } from '../memory/mental_map.js';
+import { planFetch, executeFetch } from '../storage/fetch.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -746,6 +748,77 @@ export const actionsList = [
             if (!spot) return `No storage spot named "${name}" — create one first with !nameStorage.`;
             if (!spot.accepts) return `Reservation cleared for "${spot.name}".`;
             return `Reserved "${spot.name}" for: ${spot.accepts.join(', ')}.`;
+        }
+    },
+    {
+        name: '!notePlace',
+        description: 'Note the current location in the bot\'s mental map as a place of interest (village, house, base, farm, storage, water, cave, landmark, custom). Use this to remember discoveries for later.',
+        params: {
+            'name': { type: 'string', description: 'Short name for the place, e.g. "desert-village".' },
+            'type': { type: 'string', description: `POI type: ${POI_TYPES.join(', ')}. Defaults to custom.` },
+            'notes': { type: 'string', description: 'Optional notes about the place.' },
+        },
+        perform: async function (agent, name, type, notes) {
+            const map = getMentalMap(agent);
+            if (!map) return 'Mental map not available (bot not ready).';
+            const pos = agent.bot?.entity?.position;
+            if (!pos) return 'Cannot note this place: position unknown.';
+            const res = map.note(pos, { name, type, notes, source: 'told' });
+            if (!res) return `Could not note that place (invalid name "${name}").`;
+            const p = res.poi;
+            return res.created
+                ? `Noted ${p.type} "${p.name}" at (${p.x}, ${p.y}, ${p.z}).`
+                : `Updated my note on "${p.name}" at (${p.x}, ${p.y}, ${p.z}) — seen ${p.seen} time(s) now.`;
+        }
+    },
+    {
+        name: '!forgetPoi',
+        description: 'Remove a place from the bot\'s mental map.',
+        params: {
+            'name': { type: 'string', description: 'The POI name to forget (see !pois).' },
+        },
+        perform: async function (agent, name) {
+            const map = getMentalMap(agent);
+            if (!map) return 'Mental map not available (bot not ready).';
+            return map.remove(name) ? `Forgot "${name}".` : `No place named "${name}" in my mental map.`;
+        }
+    },
+    {
+        name: '!goToPoi',
+        description: 'Travel to a place in the bot\'s mental map (see !pois).',
+        params: {
+            'name': { type: 'string', description: 'The POI name to travel to.' },
+        },
+        perform: async function (agent, name) {
+            const map = getMentalMap(agent);
+            if (!map) return 'Mental map not available (bot not ready).';
+            const poi = map.get(name);
+            if (!poi) return `No place named "${name}" in my mental map.`;
+            const code = await agent.actions.runAction('action:goToPoi', async () => {
+                await skills.goToPosition(agent.bot, poi.x, poi.y, poi.z, 3);
+            }, {});
+            if (code?.interrupted) return `Interrupted on the way to "${poi.name}".`;
+            return `Arrived at ${poi.type} "${poi.name}".`;
+        }
+    },
+    {
+        name: '!fetchItem',
+        description: 'Storage-aware planning: route to the containers believed to hold an item (from the storage index) and withdraw the wanted amount.',
+        params: {
+            'item_name': { type: 'string', description: 'The item to fetch, e.g. iron_ingot.' },
+            'count': { type: 'int', description: 'How many to fetch. Defaults to -1 (everything stored).', domain: [-1, Number.MAX_SAFE_INTEGER] },
+        },
+        perform: async function (agent, item_name, count) {
+            const want = count == null ? -1 : count;
+            const plan = planFetch(agent, item_name, want);
+            if (!plan.targets.length) {
+                return `No stored ${plan.itemName} on record. View chests (!viewChest) or scan (!storage) to build the index.`;
+            }
+            if (!plan.covered) {
+                return `Only ${plan.total}x ${plan.itemName} believed stored (want ${plan.want}). Fetching what exists.`;
+            }
+            const result = await executeFetch(agent, item_name, want);
+            return result;
         }
     },
     {

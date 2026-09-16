@@ -1027,19 +1027,19 @@ export async function putInChest(bot, itemName, num=-1) {
     return putInChestAt(bot, chest, itemName, num);
 }
 
-export async function takeFromChest(bot, itemName, num=-1) {
+export async function takeFromChestAt(bot, chest, itemName, num=-1) {
     /**
-     * Take the given item from the nearest chest, potentially from multiple slots.
+     * Take the given item from a SPECIFIC chest, potentially from multiple slots.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {Block} chest, the chest block to withdraw from.
      * @param {string} itemName, the item or block name to take from the chest.
      * @param {number} num, the number of items to take from the chest. Defaults to -1, which takes all items.
      * @returns {Promise<boolean>} true if the item was taken from the chest, false otherwise.
      * @example
-     * await skills.takeFromChest(bot, "oak_log");
+     * await skills.takeFromChestAt(bot, chestBlock, "oak_log");
      * **/
-    let chest = world.getNearestBlock(bot, 'chest', 32);
-    if (!chest) {
-        log(bot, `Could not find a chest nearby.`);
+    if (!chest?.position) {
+        log(bot, `No chest block to take from.`);
         return false;
     }
     await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
@@ -1078,6 +1078,24 @@ export async function takeFromChest(bot, itemName, num=-1) {
     } catch (e) { void e; }
     log(bot, `Successfully took ${totalTaken} ${itemName} from the chest.`);
     return totalTaken > 0;
+}
+
+export async function takeFromChest(bot, itemName, num=-1) {
+    /**
+     * Take the given item from the nearest chest, potentially from multiple slots.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {string} itemName, the item or block name to take from the chest.
+     * @param {number} num, the number of items to take from the chest. Defaults to -1, which takes all items.
+     * @returns {Promise<boolean>} true if the item was taken from the chest, false otherwise.
+     * @example
+     * await skills.takeFromChest(bot, "oak_log");
+     **/
+    let chest = world.getNearestBlock(bot, 'chest', 32);
+    if (!chest) {
+        log(bot, `Could not find a chest nearby.`);
+        return false;
+    }
+    return takeFromChestAt(bot, chest, itemName, num);
 }
 
 export async function viewChest(bot) {

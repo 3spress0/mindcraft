@@ -696,6 +696,46 @@ automatically — benchmarks can assert on it, and you can just ask:
 Four new social-flavored personality presets are also available via
 `settings.personality.preset`: `guardian`, `greeter`, `scout`, and `worker`.
 
+# Mental Map (POI Notes)
+
+`src/agent/memory/mental_map.js` gives the bot a durable sense of *where
+things are*: a journal of places of interest that the LLM authors as it
+discovers the world — villages, houses, bases, farms, storage, water, caves,
+landmarks — and reads back in later sessions. It complements the WorldModel:
+the model holds verified, decaying facts; the mental map holds durable,
+human-readable place notes with provenance (told / observed / inferred).
+
+* **The LLM takes notes** — after finding something interesting, the bot (or
+  you) notes it: `!notePlace desert-village village blacksmith has loot`.
+  Notes near an existing POI of the same type merge instead of duplicating,
+  bumping the sighting count.
+* **Automatic notes** — deaths are noted automatically with the extracted
+  cause; the map also seeds itself from the home waypoint, last death
+  position, and named storage spots.
+* **Recall & travel** — `!pois` (optionally filtered by type) lists
+  everything remembered; `!goToPoi desert-village` travels there;
+  `!memory` now includes the mental map so the LLM sees it whenever it
+  inspects its own memory.
+
+```text
+!notePlace riverside-house house two floors, door broken
+!pois village               # filter by type
+!goToPoi desert-village
+!forgetPoi old-camp
+```
+
+# Storage-Aware Fetching
+
+Because the storage index remembers what was put where, the bot can plan
+retrievals instead of re-searching: `!fetchItem iron_ingot 32` routes to the
+containers believed to hold the item (from the index), walks there, and
+withdraws until satisfied — reporting exactly which chests it visited.
+
+```text
+!fetchItem iron_ingot 32    # get 32 iron from storage
+!fetchItem bread            # get every stored bread (-1 = all)
+```
+
 # Legit Awareness (Radar)
 
 Borrowing the *information* side of utility clients like Meteor Client and

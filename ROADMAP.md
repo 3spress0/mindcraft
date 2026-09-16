@@ -14,6 +14,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [~] Semantic memory — embedding model configurable per profile; retrieval not wired
 * [x] Entity memory — world-model `entity` facts via observation collector
 * [x] Location/waypoint memory — `memory_bank.js` + world-model `location` facts
+* [x] Mental map (POI notes) — `memory/mental_map.js`: durable village/house/base/farm/storage notes the LLM authors with `!notePlace` and reads via `!memory`/`!pois`/`!goToPoi`; deaths auto-noted
 * [x] Observation timestamps — every fact carries `firstSeen`/`lastSeen`
 * [x] Observation confidence — source-based defaults (observed/verified/inferred/told)
 * [x] Stale-information expiration — TTLs + confidence decay + pruning in collector
@@ -295,7 +296,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Storage optimization — unload balances deposits across multiple chests by estimated free capacity (`storage/balancing.js`)
 * [x] Overflow handling — `inventory_full` need auto-unloads with multi-chest balancing, reservations, and spot routing
 * [x] Named storage locations — `storage/placement.js` registry, persisted per bot
-* [x] Storage-aware planning — unload routes deposits to named spots / last-used chest
+* [x] Storage-aware planning — unload routes deposits to named spots / last-used chest; `!fetchItem` plans and executes retrieval from indexed containers
 
 ### Survival
 
@@ -464,7 +465,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Crafting benchmark — crafting task suite
 * [x] Mining benchmark — iron_mine scenario
 * [ ] Exploration benchmark
-* [ ] Navigation benchmark
+* [x] Navigation benchmark — `tests/navigation_benchmark.test.js`: replay integrity, cache hygiene, hazard hardening, safe route selection, frontier consistency
 * [x] Building benchmark — shelter_build/construction scenarios
 * [ ] Recovery benchmark
 * [ ] Storage benchmark
@@ -644,8 +645,10 @@ autonomous farming + named storage routing landed in batch 9
 multi-day survival benchmark now guards the decision layer
 (`tests/survival_benchmark.test.js`), storage is load-balanced and
 reservation-aware (`storage/balancing.js`, `!reserveStorage`), exploration
-steers around hazard avoid-zones (`navigation/route_choice.js`), and deaths
-are tracked persistently (`library/metrics.js`, `!metrics`). Remaining
-frontier: chest-side sorting/stack management, storage-aware *planning*
-(fetch routes), LLM-in-the-loop scenario benchmarks, and navigation/death
-rate benchmarks.
+steers around hazard avoid-zones (`navigation/route_choice.js`), deaths
+are tracked persistently (`library/metrics.js`, `!metrics`), the bot keeps a
+durable mental map of POIs (`memory/mental_map.js`, `!notePlace`/`!pois`),
+`!fetchItem` retrieves stored items by routing to their indexed containers,
+and a deterministic navigation benchmark guards the movement layer. Remaining
+frontier: chest-side sorting/stack management, semantic-memory retrieval,
+LLM-in-the-loop scenario benchmarks, and bed-spawn/respawn awareness.

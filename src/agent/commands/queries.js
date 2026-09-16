@@ -12,6 +12,7 @@ import { profileDocs, getProfileName } from '../baritone/settings.js';
 import { getStorageIndex, saveStorageIndex } from '../storage/index.js';
 import { getSpotRegistry } from '../storage/placement.js';
 import { getMetrics } from '../library/metrics.js';
+import { getMentalMap } from '../memory/mental_map.js';
 import { getHome } from '../navigation/home.js';
 import { hazardReport, scanHazards } from '../navigation/hazards.js';
 import * as skills from '../library/skills.js';
@@ -365,7 +366,7 @@ export const queryList = [
     },
     {
         name: "!memory",
-        description: "Inspect the bot's memory: saved places, the home waypoint, and a summary of the persistent world model.",
+        description: "Inspect the bot's memory: saved places, the home waypoint, the mental map (noted POIs like villages/houses/bases), and a summary of the persistent world model.",
         perform: function (agent) {
             const lines = ['MEMORY'];
             const keys = agent.memory_bank?.getKeys?.() || '';
@@ -375,11 +376,37 @@ export const queryList = [
                 ? `Home: (${home.x}, ${home.y}, ${home.z})`
                 : 'Home: not set (use !sethome)');
             try {
+                const map = getMentalMap(agent);
+                if (map) lines.push('', map.summarize());
+            } catch { /* mental map optional */ }
+            try {
                 if (agent.world_model?.render) {
                     lines.push('', agent.world_model.render().split('\n').slice(0, 12).join('\n'));
                 }
             } catch { /* world model optional */ }
             return pad(lines.join('\n'));
+        }
+    },
+    {
+        name: "!pois",
+        description: "Show the bot's mental map: every place of interest it has noted (villages, houses, bases, farms, storage, landmarks...) with coordinates and notes. Add one with !notePlace.",
+        params: {
+            'type': { type: 'string', description: 'Optional filter: village, house, base, farm, storage, water, cave, landmark, death, custom.' },
+        },
+        perform: function (agent, type) {
+            const map = getMentalMap(agent);
+            if (!map) return pad('Mental map not available (bot not ready).');
+            if (type) {
+                const list = map.list({ type });
+                if (!list.length) return pad(`No ${type} POIs noted yet.`);
+                const lines = [`${type.toUpperCase()} POIS (${list.length})`];
+                for (const p of list) {
+                    const extra = p.notes ? ` — ${p.notes}` : '';
+                    lines.push(`- ${p.name} at (${p.x}, ${p.y}, ${p.z})${extra}`);
+                }
+                return pad(lines.join('\n'));
+            }
+            return pad(map.summarize());
         }
     },
     {
