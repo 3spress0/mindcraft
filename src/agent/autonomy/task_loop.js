@@ -19,6 +19,8 @@ import { evaluateNeeds, countFreeSlots, isNightTime } from './needs.js';
 import { EXECUTORS } from './executors.js';
 import { listTools } from '../library/durability.js';
 import { isEdible } from './unload.js';
+import { farmSnapshot } from './farming.js';
+import { assessLocalRisk, filterNeedsByRisk, riskLine } from './risk.js';
 import * as world from '../library/world.js';
 import convoManager from '../conversation.js';
 
@@ -32,7 +34,10 @@ export function getAutonomyConfig() {
         free_slot_alert: block.needs?.free_slot_alert ?? 2,
         min_torches: block.needs?.min_torches ?? 8,
         min_food: block.needs?.min_food ?? 5,
-        max_unload_types: block.needs?.max_unload_types ?? 8
+        max_unload_types: block.needs?.max_unload_types ?? 8,
+        farm_radius: block.needs?.farm_radius ?? 16,
+        max_harvest: block.needs?.max_harvest ?? 16,
+        max_plants: block.needs?.max_plants ?? 24
     };
     const [lo, hi] = Array.isArray(block.cooldown_s) && block.cooldown_s.length === 2
         ? block.cooldown_s : [20, 60];
@@ -59,6 +64,11 @@ export function snapshotNeeds(agent, cfg) {
             if (item && isEdible(bot, item)) foodCount += item.count ?? 1;
         }
     } catch { foodCount = 0; }
+    // Only scan crops when food is actually low — keeps the loop cheap.
+    let farm = null;
+    if (foodCount < cfg.needs.min_food) {
+        try { farm = farmSnapshot(bot, { radius: cfg.needs.farm_radius }); } catch { farm = null; }
+    }
     return {
         tools,
         freeSlots: countFreeSlots(bot),
@@ -66,7 +76,8 @@ export function snapshotNeeds(agent, cfg) {
         isNight: isNightTime(bot),
         hasPendingResume: !!agent?.behavior_state?.hasPendingResume?.(),
         inventoryCounts,
-        foodCount
+        foodCount,
+        farm
     };
 }
 
@@ -136,8 +147,23 @@ export class AutonomyLoop {
             if (this._exploreOverride != null) cfg.needs.explore_when_idle = this._exploreOverride;
             const ctx = snapshotNeeds(this.agent, cfg);
             const needs = evaluateNeeds(ctx, cfg.needs);
-            const actionable = needs.find(n => !n.advisory && this._executors[n.kind]);
+
+            // Risk-aware planning: dangerous local conditions hold risky work
+            // (exploration, farming) while safe upkeep still proceeds.
+            let risk = null;
+            try { risk = assessLocalRisk(this.agent.bot, { posture: this.agent.bot?._risk_profile }); }
+            catch { risk = null; }
+            this.lastRisk = risk;
+            const safeNeeds = filterNeedsByRisk(needs, risk);
+            const actionable = safeNeeds.find(n => !n.advisory && this._executors[n.kind]);
             if (!actionable) {
+                const held = needs.find(n => !n.advisory && this._executors[n.kind]);
+                if (held && risk?.level === 'high') {
+                    const entry = { t: now, kind: held.kind, detail: held.detail, result: `held: ${riskLine(risk)}` };
+                    this.history.push(entry);
+                    if (this.history.length > cfg.history_limit) this.history.splice(0, this.history.length - cfg.history_limit);
+                    this.lastRun = entry;
+                }
                 this._nextRunAt = now + this._cooldownMs(cfg);
                 return;
             }
@@ -192,6 +218,9 @@ export class AutonomyLoop {
         lines.push(needs.length
             ? `Current needs: ${needs.map(n => `${n.kind}${n.advisory ? ' (advisory)' : ''}`).join(', ') || 'none'}`
             : 'Current needs: none');
+        let riskLineText = '';
+        try { riskLineText = riskLine(this.lastRisk ?? assessLocalRisk(this.agent?.bot)); } catch { riskLineText = ''; }
+        if (riskLineText) lines.push(riskLineText);
         if (this.history.length) {
             lines.push('Recent history:');
             for (const h of this.history.slice(-5)) lines.push(`- ${h.kind}: ${h.result}`);

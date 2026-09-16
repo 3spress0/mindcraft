@@ -9,6 +9,7 @@ import * as durability from '../library/durability.js';
 import { explore } from '../navigation/exploration.js';
 import { autonomyDefaults } from './needs.js';
 import { executeInventoryUnload } from './unload.js';
+import { executeFarming } from './farming.js';
 
 /** Replace the worn/broken tool named in the need. */
 export async function executeToolReplacement(agent, need, cfg = {}) {
@@ -56,5 +57,6 @@ export const EXECUTORS = {
     explore: executeExploration,
     inventory_full: executeInventoryUnload,
     restock_torches: executeRestock,
-    restock_food: executeRestock
+    restock_food: executeRestock,
+    farm: executeFarming
 };

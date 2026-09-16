@@ -5,7 +5,7 @@
  * build the snapshot, which keeps this fully testable.
  */
 
-export const NEED_KINDS = ['tool_replace', 'inventory_full', 'restock_food', 'restock_torches', 'explore'];
+export const NEED_KINDS = ['tool_replace', 'inventory_full', 'restock_food', 'restock_torches', 'farm', 'explore'];
 
 export function autonomyDefaults() {
     return {
@@ -16,7 +16,10 @@ export function autonomyDefaults() {
         free_slot_alert: 2,
         min_torches: 8,
         min_food: 5,
-        max_unload_types: 8
+        max_unload_types: 8,
+        farm_radius: 16,
+        max_harvest: 16,
+        max_plants: 24
     };
 }
 
@@ -86,6 +89,22 @@ export function evaluateNeeds(ctx = {}, cfg = {}) {
             advisory: false,
             info: `Food: ${foodCount}/${c.min_food}; wheat available for bread.`
         });
+    }
+
+    // 3b. Farming: grow the food reserve when crafting can't cover it.
+    const farm = ctx.farm;
+    if (farm && foodCount < c.min_food && !((counts['wheat'] ?? 0) >= 3)) {
+        const canHarvest = (farm.mature ?? 0) > 0;
+        const canPlant = (farm.seeds ?? 0) > 0 && (farm.farmland ?? 0) > 0;
+        if (canHarvest || canPlant) {
+            needs.push({
+                kind: 'farm',
+                urgency: 0.45,
+                detail: canHarvest ? `harvest ${farm.mature} mature crop(s)` : `plant seeds (${farm.seeds} carried)`,
+                advisory: false,
+                info: `Food: ${foodCount}/${c.min_food}; ${farm.mature ?? 0} mature, ${farm.seeds ?? 0} seeds, ${farm.farmland ?? 0} farmland.`
+            });
+        }
     }
 
     // 4. Idle long enough with nothing pending -> go see the world.

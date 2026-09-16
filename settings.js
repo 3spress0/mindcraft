@@ -189,7 +189,10 @@ const settings = {
             "free_slot_alert": 2,           // unload to storage when <= this many free slots
             "min_torches": 8,               // self-maintain at least this many torches
             "min_food": 5,                  // self-maintain at least this many edible items
-            "max_unload_types": 8           // item types deposited per unload run
+            "max_unload_types": 8,          // item types deposited per unload run
+            "farm_radius": 16,              // blocks to scan for crops / farmland
+            "max_harvest": 16,              // crops harvested per farming run
+            "max_plants": 24                // seeds planted per farming run
         }
     },
 

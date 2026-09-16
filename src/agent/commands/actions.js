@@ -1,4 +1,5 @@
 import * as skills from '../library/skills.js';
+import * as world from '../library/world.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
 import { buildSchematic } from '../npc/schematic_build.js';
@@ -10,6 +11,7 @@ import { setHome, getHome } from '../navigation/home.js';
 import { explore } from '../navigation/exploration.js';
 import { replaceTool } from '../library/durability.js';
 import { RISK_PRESETS } from '../humanlike/personality.js';
+import { getSpotRegistry } from '../storage/placement.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -708,6 +710,22 @@ export const actionsList = [
             agent.autonomy?.setExploreEnabled(preset.explore_when_idle);
             agent.bot._risk_profile = String(posture).toLowerCase();
             return `Risk posture set to ${posture.toLowerCase()}: ${preset.description}.`;
+        }
+    },
+    {
+        name: '!nameStorage',
+        description: 'Name the nearest chest (within 16 blocks) so the bot remembers it as a storage spot and can route inventory unloads to it. List spots with !storageSpots.',
+        params: {
+            'name': { type: 'string', description: 'A short name for this storage spot, e.g. "tools" or "cobble".' },
+        },
+        perform: async function (agent, name) {
+            const registry = getSpotRegistry(agent);
+            if (!registry) return 'Storage spots not available (bot not ready).';
+            const chest = world.getNearestBlock(agent.bot, 'chest', 16);
+            if (!chest) return 'No chest within 16 blocks — stand next to the chest you want to name.';
+            const spot = registry.add(name, chest.position, 'chest');
+            if (!spot) return `Could not name that spot (invalid name "${name}").`;
+            return `Named storage spot "${spot.name}": chest at (${spot.x}, ${spot.y}, ${spot.z}).`;
         }
     },
     {

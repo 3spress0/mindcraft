@@ -11,6 +11,7 @@
 
 import * as world from '../library/world.js';
 import { isTool } from '../library/durability.js';
+import { getSpotRegistry } from '../storage/placement.js';
 
 const ARMOR_WORDS = ['helmet', 'chestplate', 'leggings', 'boots', 'elytra', 'shield', 'turtle_helmet'];
 const WORKING_ITEMS = ['water_bucket', 'lava_bucket', 'bucket', 'flint_and_steel', 'fishing_rod', 'compass', 'clock', 'map', 'lead', 'saddle'];
@@ -64,11 +65,25 @@ export async function executeInventoryUnload(agent, need, cfg = {}) {
     if (!bot) return 'unload: no bot';
     const maxTypes = Math.max(1, Math.min(16, cfg.max_unload_types ?? 8));
 
-    const chest = world.getNearestBlock(bot, 'chest', 32);
-    if (!chest) return 'unload: no chest within 32 blocks — build or find storage first';
-
     const list = itemsToUnload(bot, { maxTypes });
     if (!list.length) return 'unload: nothing worth depositing';
+
+    let chest = world.getNearestBlock(bot, 'chest', 32);
+
+    // No chest in immediate range? Route to a known storage spot (named
+    // spots from !nameStorage, or where we last unloaded successfully).
+    if (!chest) {
+        try {
+            const registry = getSpotRegistry(agent);
+            const spot = registry?.nearestTo(bot.entity?.position, { maxDist: 64 });
+            if (spot) {
+                const skills = await import('../library/skills.js');
+                await skills.goToPosition(bot, spot.x, spot.y, spot.z, 3);
+                if (!bot.interrupt_code) chest = world.getNearestBlock(bot, 'chest', 10);
+            }
+        } catch { /* spot routing is best-effort */ }
+    }
+    if (!chest) return 'unload: no chest within 32 blocks (and no known storage spot) — build or find storage first';
 
     let skills;
     try { skills = await import('../library/skills.js'); }
@@ -84,5 +99,12 @@ export async function executeInventoryUnload(agent, need, cfg = {}) {
         } catch { /* keep going with the rest */ }
     }
     if (!deposited) return 'unload: reached the chest but deposited nothing';
+
+    // Remember where this worked so future runs can route straight here.
+    try {
+        const pos = chest?.position ?? world.getNearestBlock(bot, 'chest', 10)?.position;
+        if (pos) getSpotRegistry(agent)?.add('_last_unload', pos, 'chest');
+    } catch { /* bookkeeping only */ }
+
     return `unload: deposited ${deposited} item(s) (${done.slice(0, 4).join(', ')}${done.length > 4 ? ', ...' : ''})`;
 }

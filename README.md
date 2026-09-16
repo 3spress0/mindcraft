@@ -597,7 +597,7 @@ the "larger autonomous behavior" stage of the progression. It complements
 Configuration lives under `settings.autonomy` (`enabled`, `cooldown_s`,
 `action_timeout_s`, and per-need thresholds like `tool_replace_threshold`,
 `explore_when_idle`, `explore_idle_s`, `min_torches`, `min_food`,
-`max_unload_types`).
+`max_unload_types`, `farm_radius`, `max_harvest`, `max_plants`).
 
 # Social Memory & Reactions
 
@@ -624,7 +624,7 @@ only on entities the server actually reports.
 
 Reactions can be disabled entirely with `settings.social.greetings: false`.
 
-# Storage Management, Reserves & Risk Postures
+# Storage, Reserves, Farming & Risk
 
 The autonomy loop (`src/agent/autonomy/`) now keeps the bot's material life in
 order and lets you dial its risk appetite — all using only information the
@@ -639,16 +639,32 @@ server already provides.
   materials allow: torches (`min_torches`, default 8, crafted from
   coal/charcoal + sticks) and food (`min_food`, default 5, bread from wheat).
   Nothing is crafted unless the recipe materials are already in hand.
+* **Autonomous farming** — when food is low and bread can't be crafted, the
+  loop tends crops instead: it harvests mature wheat, carrots, potatoes and
+  beetroots (reading the server-reported growth age) and plants carried seeds
+  on open farmland. Bounded per run (`max_harvest`/`max_plants`,
+  `farm_radius`) and interruptible like every other autonomy action.
+* **Named storage spots** — teach the bot where storage lives with
+  `!nameStorage tools` standing next to a chest; `!storageSpots` lists them.
+  When no chest is within 32 blocks, inventory unloads route to the nearest
+  known spot (named spots, or the last chest that worked) within 64 blocks.
+* **Risk-aware planning** — before every autonomous action the loop assesses
+  local danger (hostile mobs in range, night) against the bot's risk posture.
+  Under high risk, risky work (exploration, farming) is held — and recorded
+  in `!autonomyStatus` — while safe upkeep (tool swaps, crafting reserves)
+  still proceeds.
 * **Risk postures** — `!setRisk cautious|balanced|bold` applies a preset from
   `humanlike/personality.js`: cautious uses the hazard-aware `safe` path
   profile and skips idle exploration, balanced uses default paths and
   explores when idle, bold uses fast paths (which may dig) and explores. The
-  posture is stored on the bot and reported by `!baritoneStatus` context.
+  posture also scales the risk assessment (bold tolerates more, cautious less).
 
 ```text
-!setRisk cautious   # slow and careful
-!setRisk balanced   # default
-!setRisk bold       # fast, exploratory, may dig
+!setRisk cautious     # slow and careful
+!setRisk balanced     # default
+!setRisk bold         # fast, exploratory, may dig
+!nameStorage tools    # remember the nearest chest as "tools"
+!storageSpots         # list remembered storage spots
 ```
 
 Four new social-flavored personality presets are also available via

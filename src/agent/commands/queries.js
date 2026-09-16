@@ -10,6 +10,7 @@ import { previewPath, status as baritoneStatus } from '../baritone/baritone.js';
 import { GoalBlock } from '../baritone/goals.js';
 import { profileDocs, getProfileName } from '../baritone/settings.js';
 import { getStorageIndex, saveStorageIndex } from '../storage/index.js';
+import { getSpotRegistry } from '../storage/placement.js';
 import { getHome } from '../navigation/home.js';
 import { hazardReport, scanHazards } from '../navigation/hazards.js';
 import * as skills from '../library/skills.js';
@@ -332,6 +333,21 @@ export const queryList = [
             const lines = [`${item_name} found in ${hits.length} container(s):`];
             for (const h of hits) {
                 lines.push(`- ${h.type} at (${h.x}, ${h.y}, ${h.z}): x${h.count}`);
+            }
+            return pad(lines.join('\n'));
+        }
+    },
+    {
+        name: "!storageSpots",
+        description: "List the bot's named storage spots (from !nameStorage) that it routes deposits to when unloading its inventory.",
+        perform: function (agent) {
+            const registry = getSpotRegistry(agent);
+            if (!registry) return pad('Storage spots not available (bot not ready).');
+            const spots = registry.list();
+            if (!spots.length) return pad('No named storage spots yet. Point the bot at a chest with !nameStorage <name>.');
+            const lines = [`STORAGE SPOTS (${spots.length})`];
+            for (const s of spots) {
+                lines.push(`- ${s.name}: ${s.type} at (${s.x}, ${s.y}, ${s.z})`);
             }
             return pad(lines.join('\n'));
         }

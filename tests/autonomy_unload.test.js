@@ -65,11 +65,24 @@ describe('unload executor', () => {
                 entity: { position: { x: 0, y: 64, z: 0 } },
                 findBlocks: () => [],
                 blockAt: () => null,
-                inventory: { slots: [] }
+                inventory: { slots: [item('cobblestone', 9, 64)] }
             }
         };
         const msg = await executeInventoryUnload(agent, {});
         assert.match(msg, /no chest within 32 blocks/);
+    });
+
+    it('nothing-to-deposit takes priority over chest search', async () => {
+        const agent = {
+            bot: {
+                entity: { position: { x: 0, y: 64, z: 0 } },
+                findBlocks: () => [],
+                blockAt: () => null,
+                inventory: { slots: [] }
+            }
+        };
+        const msg = await executeInventoryUnload(agent, {});
+        assert.match(msg, /nothing worth depositing/);
     });
 
     it('reports nothing to deposit when inventory is all essentials', async () => {
