@@ -1,30 +1,18 @@
 /**
  * gates.js — pre-flight policy gates for LIVE Minecraft integration testing.
  *
- * The FakeBot benchmark (`src/agent/benchmark/`) proves planner/recovery logic.
- * A live run touches things the benchmark cannot: a real server, authentication,
- * chat/anti-cheat behaviour, and other players. So nothing in `src/agent/live/`
- * is allowed to open a socket before these gates pass.
+ * Nothing in `src/agent/live/` may open a socket before the network and
+ * credential gates pass. A remote target is allowed when the user explicitly
+ * selects it; ownership/staff authorization records are deliberately not part
+ * of that network decision. Server rules, anti-cheat, and bot transparency
+ * still apply outside this gate.
  *
- * Two hard gates:
+ * The credential gate remains independent: direct protocol-only runs load no
+ * LLM provider, leaked-key digests are rejected, and report evidence is
+ * redacted before it is written or printed.
  *
- *  1. `evaluateNetworkGate` — who owns the server we are about to join?
- *       - loopback  -> always allowed (your own machine, stage 2 of the ramp)
- *       - private   -> allowed with a warning (LAN world you own)
- *       - public    -> allowed ONLY with an explicit `--tos-ack` phrase AND a
- *                    valid authorization record naming the staff member who
- *                    permitted automation, plus host/username/port match.
- *     There is no override that skips the record. We do not join servers whose
- *     staff have not said yes, and we never conceal that the client is a bot.
- *
- *  2. `evaluateCredentialGate` — which LLM key would this run spend?
- *     A leaked key must never be used again. Keys may only come from an
- *     untracked file or the environment; a key whose SHA-256 matches a known
- *     leaked digest fails the run; and `--mode direct` deliberately loads no
- *     LLM key at all (the first live runs should not cost API calls).
- *
- * Deliberately dependency-free (no mineflayer / no settings import) so the
- * gate logic itself is unit-testable and runnable anywhere: `npm run test`.
+ * This module is dependency-free apart from Node built-ins so the gates can be
+ * tested without Mineflayer or a Minecraft server.
  */
 
 import crypto from 'crypto';
@@ -38,9 +26,6 @@ export const EXIT = {
     FAILED: 1,
     GATE: 2,
 };
-
-/** Magic phrase required to acknowledge staff authorization for public hosts. */
-export const TOS_ACK_PHRASE = 'authorized-by-server-staff';
 
 export const HOST_KIND = {
     LOOPBACK: 'loopback',
@@ -64,105 +49,31 @@ export function classifyHost(host) {
     const h = String(host || '').trim().toLowerCase().replace(/^\[(.*)\]$/, '$1');
     if (!h) return HOST_KIND.PUBLIC;
     if (h === 'localhost' || h === '::1' || h.startsWith('127.')) return HOST_KIND.LOOPBACK;
-    // 0.0.0.0 is a bind address, not a connect target — treated as local so a
-    // misconfigured test fails loudly on connect rather than silently dialling out.
+    // 0.0.0.0 is a bind address, not a connect target. Treating it as local
+    // keeps a bad local configuration from silently becoming a remote dial.
     if (h === '0.0.0.0') return HOST_KIND.LOOPBACK;
     if (/^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h)) return HOST_KIND.PRIVATE;
     if (/^169\.254\./.test(h)) return HOST_KIND.PRIVATE; // link-local
     if (/^fd[0-9a-f]{2}:/.test(h)) return HOST_KIND.PRIVATE; // unique local
     if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) return HOST_KIND.PUBLIC;
-    return HOST_KIND.PUBLIC; // any hostname is public by default
+    return HOST_KIND.PUBLIC; // hostnames are public by default
 }
 
 export function isLocalHost(host) {
     return classifyHost(host) !== HOST_KIND.PUBLIC;
 }
 
-/* ------------------------------------------------------- authorization record */
-
 /**
- * The authorization record is the auditable answer to "did the server staff say
- * bots are OK?". It lives outside the repo (e.g. `~/bagelsmp-auth.json` or
- * `.live/authorization.json`, both gitignored) and records who granted it.
+ * Decide whether a target may be handed to a driver.
  *
- * @param {string} filePath
- * @returns {{record: object|null, problems: string[]}}
- */
-export function loadAuthorizationRecord(filePath, ctx = {}) {
-    const problems = [];
-    if (!filePath) {
-        return { record: null, problems: ['no authorization record supplied (--authorization <path>)'] };
-    }
-    let raw;
-    try {
-        raw = fs.readFileSync(filePath, 'utf8');
-    } catch (err) {
-        return { record: null, problems: [`cannot read authorization record at ${filePath}: ${err.message}`] };
-    }
-    let record;
-    try {
-        record = JSON.parse(raw);
-    } catch (err) {
-        return { record: null, problems: [`authorization record is not valid JSON: ${err.message}`] };
-    }
-    problems.push(...validateAuthorizationRecord(record, ctx));
-    return { record, problems };
-}
-
-/**
- * @returns {string[]} problems (empty when the record is usable)
- */
-export function validateAuthorizationRecord(record = {}, ctx = {}) {
-    const problems = [];
-    if (!record || typeof record !== 'object') return ['authorization record missing'];
-
-    if (record.automation_permitted !== true) {
-        problems.push('record.automation_permitted must be exactly true (an automated client is permitted on this server)');
-    }
-    if (record.no_evasion_confirmed !== true) {
-        problems.push('record.no_evasion_confirmed must be true (bot identity/behaviour is not concealed from anti-cheat)');
-    }
-    for (const field of ['server', 'granted_by', 'granted_on', 'channel']) {
-        const v = record[field];
-        if (typeof v !== 'string' || !v.trim()) problems.push(`record.${field} is required and must be non-empty`);
-    }
-    if (typeof record.granted_on === 'string' && Number.isNaN(Date.parse(record.granted_on))) {
-        problems.push('record.granted_on must be an ISO date');
-    }
-    if (typeof record.expires_on === 'string' && record.expires_on.trim()) {
-        const expiry = Date.parse(record.expires_on);
-        if (Number.isNaN(expiry)) problems.push('record.expires_on must be an ISO date when present');
-        else if (expiry <= (ctx.now ?? Date.now())) problems.push(`record.expires_on ${record.expires_on} is in the past (renew it with staff)`);
-    }
-
-    if (ctx.host) {
-        const wanted = normalizeHost(ctx.host);
-        const granted = normalizeHost(record.server);
-        if (granted && granted !== wanted) problems.push(`record authorizes "${record.server}", not "${ctx.host}"`);
-    }
-    if (ctx.username && record.allowed_username) {
-        if (String(record.allowed_username).toLowerCase() !== String(ctx.username).toLowerCase()) {
-            problems.push(`record authorizes account "${record.allowed_username}", not "${ctx.username}"`);
-        }
-    }
-    if (ctx.port != null && Array.isArray(record.allowed_ports) && record.allowed_ports.length) {
-        if (!record.allowed_ports.map(Number).includes(Number(ctx.port))) {
-            problems.push(`record authorizes ports [${record.allowed_ports.join(', ')}], not ${ctx.port}`);
-        }
-    }
-    return problems;
-}
-
-function normalizeHost(host) {
-    return String(host || '').trim().toLowerCase().replace(/^www\./, '').replace(/:\d+$/, '');
-}
-
-/**
- * The network gate. Called by the runner before any connect().
+ * `explicitTarget` is false only for the CLI's implicit default target. The
+ * default is true for callers of this pure function because passing a host to
+ * the function is itself an explicit target selection. The CLI supplies the
+ * stricter value so a future default cannot accidentally become a remote run.
  *
  * @param {{host:string, port?:number, username?:string, auth?:string,
- *          allowRemote?:boolean, tosAck?:string, authorizationPath?:string,
- *          now?:number, forceLocal?:boolean}} opts
+ *          version?:string, explicitTarget?:boolean, localOnly?:boolean,
+ *          now?:number}} opts
  */
 export function evaluateNetworkGate(opts = {}) {
     const host = String(opts.host || '').trim();
@@ -171,22 +82,30 @@ export function evaluateNetworkGate(opts = {}) {
         permitted: false,
         host,
         port: opts.port ?? null,
+        username: opts.username ?? null,
+        auth: opts.auth ?? null,
+        version: opts.version ?? 'auto',
         hostKind: kind,
         problems: [],
         warnings: [],
         mode: kind === HOST_KIND.PUBLIC ? 'public' : (kind === HOST_KIND.PRIVATE ? 'lan' : 'local'),
-        authorization: null,
+        explicitTarget: opts.explicitTarget !== false,
     };
 
     if (!host) {
         decision.problems.push('no server host configured');
         return decision;
     }
-    if (opts.username) {
-        const nameOk = /^[a-zA-Z0-9_]{3,16}$/.test(opts.username);
-        if (!nameOk) decision.problems.push(`invalid Minecraft username "${opts.username}" (3-16 chars, [a-zA-Z0-9_])`);
+    if (opts.port != null && (!Number.isInteger(Number(opts.port)) || Number(opts.port) < 1 || Number(opts.port) > 65535)) {
+        decision.problems.push(`invalid Minecraft port "${opts.port}" (expected an integer from 1 to 65535)`);
     }
-    if (opts.auth && !['offline', 'microsoft'].includes(opts.auth)) {
+    if (opts.version != null && opts.version !== 'auto' && !/^\d+\.\d+(?:\.\d+)?$/.test(String(opts.version))) {
+        decision.problems.push(`invalid Minecraft version "${opts.version}" (expected auto or a numeric version such as 1.21.6)`);
+    }
+    if (opts.username != null && !/^[a-zA-Z0-9_]{3,16}$/.test(String(opts.username))) {
+        decision.problems.push(`invalid Minecraft username "${opts.username}" (3-16 chars, [a-zA-Z0-9_])`);
+    }
+    if (opts.auth != null && !['offline', 'microsoft'].includes(opts.auth)) {
         decision.problems.push(`unknown auth mode "${opts.auth}" (expected offline or microsoft)`);
     }
 
@@ -203,22 +122,22 @@ export function evaluateNetworkGate(opts = {}) {
         return decision;
     }
 
-    // Public host: three independent requirements, no shortcut.
-    if (!opts.allowRemote) {
-        decision.problems.push(`refusing to connect to public host "${host}" without --allow-remote`);
+    // Public/remote hosts need an explicit target and a real Microsoft login.
+    // Selecting --host (or explicitly opting into --from-settings) is the
+    // user's authorization to target that host; no staff-record side channel
+    // is consulted and there is no blanket bypass flag.
+    if (!decision.explicitTarget) {
+        decision.problems.push(`refusing to connect to public host "${host}" without an explicit target (--host or --from-settings)`);
     }
-    if (opts.tosAck !== TOS_ACK_PHRASE) {
-        decision.problems.push(`public hosts require --tos-ack ${TOS_ACK_PHRASE} (you confirmed bot policy with the owners/staff)`);
+    if (!opts.username) {
+        decision.problems.push('a valid Minecraft username is required for a public server');
     }
-    if (opts.auth === 'offline' || !opts.auth) {
-        decision.problems.push('public servers must use auth=microsoft with your own account (offline auth on a public server is not supported)');
+    if (opts.auth !== 'microsoft') {
+        decision.problems.push('public servers must use auth=microsoft with your own account (auth=offline is not supported remotely)');
     }
-    const { record, problems } = loadAuthorizationRecord(opts.authorizationPath, {
-        host, port: opts.port, username: opts.username, now: opts.now,
-    });
-    decision.authorization = record;
-    decision.problems.push(...problems);
-    if (opts.forceLocal) decision.problems.push('--local-only was set, so public hosts are refused regardless of other flags');
+    if (opts.localOnly) {
+        decision.problems.push('--local-only refuses public/remote hosts');
+    }
 
     decision.permitted = decision.problems.length === 0;
     return decision;
@@ -260,8 +179,6 @@ export function fingerprint(secret) {
     const s = String(secret ?? '');
     if (!s) return { present: false };
     const digest = sha256(s);
-    // Only the provider prefix and a hash fragment: enough to tell two keys
-    // apart, useless for reconstructing one, safe to keep in a report.
     return { present: true, length: s.length, sha256: digest, sha8: digest.slice(0, 8), prefix: s.slice(0, 4) };
 }
 
@@ -296,7 +213,8 @@ export function evaluateCredentialGate(opts = {}) {
 
     const leaked = new Set((opts.leakedHashes || []).map((h) => String(h).trim().toLowerCase()).filter(Boolean));
 
-    // 1) No LLM needed at all (direct mode): assert that nothing leaked either.
+    // Direct mode deliberately does not load or resolve a provider key. It
+    // still scans tracked credential-shaped files so a committed leak fails.
     if (!needsLlm) {
         result.sources.push('direct mode: no LLM provider is loaded, so no API key is used by this run');
         const trackedJson = gitTrackedFiles(repoRoot, ['settings_llm_providers.json', 'keys.json', '**/*_providers.json']) || [];
@@ -312,7 +230,7 @@ export function evaluateCredentialGate(opts = {}) {
         return result;
     }
 
-    // 2) Providers file must be untracked (gitignored) if it is used at all.
+    // Providers file must be untracked (gitignored) if it is used at all.
     const providersRel = opts.providersPath || env.MINDCRAFT_LLM_PROVIDERS_PATH || 'settings_llm_providers.json';
     const providersAbs = path.isAbsolute(providersRel) ? providersRel : path.join(repoRoot, providersRel);
     const tracked = gitTrackedFiles(repoRoot, ['*']);
@@ -356,8 +274,6 @@ export function evaluateCredentialGate(opts = {}) {
             result.problems.push(`${cand.name} (${cand.source}) matches a known-leaked key digest — rotate it and replace it locally before any live run`);
         }
         if (tracked) {
-            // A leaked key is only actually rotated if the old literal is not
-            // still sitting in version control anywhere.
             const hit = tracked.slice(0, 600).find((f) => {
                 if (/\.(node_modules|png|jpg|jar|zip|lock)$/i.test(f)) return false;
                 try {

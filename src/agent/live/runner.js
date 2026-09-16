@@ -57,8 +57,18 @@ export async function runControlledTest({ driver, plan, gate, credentialGate, lo
         startedAt: new Date(started).toISOString(),
         driver: driver.name || 'unknown',
         status: 'running',
-        target: gate ? { host: gate.host, port: gate.port ?? null, mode: gate.mode, hostKind: gate.hostKind } : null,
+        target: gate ? {
+            host: gate.host,
+            port: gate.port ?? null,
+            username: gate.username ?? null,
+            auth: gate.auth ?? null,
+            version: gate.version ?? 'auto',
+            mode: gate.mode,
+            hostKind: gate.hostKind,
+        } : null,
         features: plan.features,
+        selectedPhases: plan.phases.map((p) => p.id),
+        excludedPhases: plan.excludedPhases || [],
         task: plan.task,
         timeoutScale: plan.timeoutScale,
         budgetMs: plan.budgetMs,
@@ -68,14 +78,18 @@ export async function runControlledTest({ driver, plan, gate, credentialGate, lo
                 permitted: gate.permitted === true,
                 mode: gate.mode ?? null,
                 hostKind: gate.hostKind ?? null,
-                authorization: gate.authorization ? { granted_by: gate.authorization.granted_by, server: gate.authorization.server, granted_on: gate.authorization.granted_on } : null,
                 problems: gate.problems || [],
                 warnings: gate.warnings || [],
             } : null,
             credentials: credentialGate ? { ok: credentialGate.ok === true, llm: credentialGate.llm, problems: credentialGate.problems || [], warnings: credentialGate.warnings || [] } : null,
         },
         phases: results,
-        notes: [...(plan.warnings || [])],
+        notes: [
+            ...(plan.warnings || []),
+            ...(plan.excludedPhases?.length
+                ? [`intentionally excluded by --only: ${plan.excludedPhases.map((p) => p.id).join(', ')}`]
+                : []),
+        ],
     };
 
     // ---- gates first: no socket, no LLM, no world mutation before this passes
@@ -120,6 +134,7 @@ export async function runControlledTest({ driver, plan, gate, credentialGate, lo
         let outcome = PHASE_RESULT.PASSED;
         let error = null;
         try {
+            const phaseBefore = await safeSnapshot(driver);
             await withTimeout(callDriver(driver, phase.action, {
                 plan,
                 phase,
@@ -129,6 +144,10 @@ export async function runControlledTest({ driver, plan, gate, credentialGate, lo
                 snapshot: () => safeSnapshot(driver),
             }), budget, phase.id);
             snapshot = await safeSnapshot(driver);
+            // Verification gets both the run baseline and the immediate
+            // pre-phase inventory. This prevents a pre-existing product from
+            // masquerading as a successful craft.
+            snapshot.phaseInventoryBefore = phaseBefore.inventory || {};
             const spec = bindVerifySpec(phase.verify || {}, plan.task);
             const ctx = {
                 expectBlocks: snapshot.expectedBlocks || plan.task?.build?.placed || [],
@@ -146,6 +165,16 @@ export async function runControlledTest({ driver, plan, gate, credentialGate, lo
             error = msg;
             results.push(record(phase, outcome, msg, { ms: now() - t0 }));
             log.error?.(`[live] ${phase.id} ${outcome}: ${msg}`);
+            // A timed-out Mineflayer operation may still be awaiting a packet.
+            // Give the driver a cancellation hook before the next phase so a
+            // stale pathfinder/collectblock task cannot keep a socket alive.
+            if (typeof driver.abort === 'function') {
+                try {
+                    await driver.abort({ phase, error: err, log });
+                } catch (abortErr) {
+                    report.notes.push(`driver abort after ${phase.id} failed: ${abortErr.message}`);
+                }
+            }
         }
 
         if (outcome !== PHASE_RESULT.PASSED && phase.mutating) mutatingPhaseFailed = true;
@@ -166,6 +195,7 @@ export async function runControlledTest({ driver, plan, gate, credentialGate, lo
         passed: results.filter((r) => r.result === PHASE_RESULT.PASSED).length,
         failed: failed.length,
         timedOut: results.filter((r) => r.result === PHASE_RESULT.TIMED_OUT).length,
+        excluded: report.excludedPhases.length,
     };
     report.status = failed.length === 0 ? 'passed' : 'failed';
     report.problems = failed.map((f) => `${f.phase}: ${f.error}`);
@@ -231,8 +261,11 @@ export function renderMarkdown(report) {
     lines.push('');
     lines.push(`- driver: \`${report.driver}\``);
     lines.push(`- status: **${report.status}**${report.abortedBy ? ` (aborted by ${report.abortedBy})` : ''}`);
-    lines.push(`- target: ${report.target ? `${report.target.host}${report.target.port ? `:${report.target.port}` : ''} (${report.target.mode})` : 'n/a'}`);
+    const target = report.target;
+    lines.push(`- target: ${target ? `${target.host}${target.port ? `:${target.port}` : ''} (${target.mode})` : 'n/a'}`);
+    if (target) lines.push(`- account: ${target.username || '(none)'} · auth: ${target.auth || '(none)'} · version: ${target.version || 'auto'}`);
     lines.push(`- features: ${report.features.join(', ')}`);
+    lines.push(`- selected phases: ${report.selectedPhases?.join(', ') || '(none)'}`);
     lines.push(`- duration: ${((report.durationMs ?? 0) / 1000).toFixed(1)}s (budget ${((report.budgetMs ?? 0) / 1000).toFixed(1)}s, scale x${report.timeoutScale})`);
     lines.push('');
     lines.push('| phase | result | ms | evidence |');
@@ -240,6 +273,11 @@ export function renderMarkdown(report) {
     for (const r of report.phases) {
         const evidence = (r.error || (r.checks || []).map((c) => `${c.passed ? 'ok' : 'FAIL'} ${c.label}`).join('; ') || '').replace(/\|/g, '/').replace(/\n/g, ' · ');
         lines.push(`| ${r.phase} | ${r.result} | ${r.durationMs ?? '-'} | ${evidence.slice(0, 220)} |`);
+    }
+    if (report.excludedPhases?.length) {
+        lines.push('');
+        lines.push('## Intentionally excluded phases');
+        for (const phase of report.excludedPhases) lines.push(`- ${phase.id}: ${phase.reason}`);
     }
     if (report.notes?.length) {
         lines.push('');
