@@ -26,6 +26,7 @@ import { BehaviorStateMachine } from './humanlike/behavior_state.js';
 import { AttentionTracker } from './humanlike/attention.js';
 import { AutonomyLoop } from './autonomy/task_loop.js';
 import { PlayerLedger } from './social/player_ledger.js';
+import { MetricsTracker, causeFromDeathMessage } from './library/metrics.js';
 import { ReactionGate, detectSocialEvents, reactionMessage } from './social/reactions.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
@@ -191,6 +192,15 @@ export class Agent {
         } catch (e) {
             console.error('Social layer init failed:', e);
             this.player_ledger = null;
+        }
+
+        // Survival metrics: deaths, causes, uptime — persisted across sessions.
+        try {
+            this.metrics = new MetricsTracker({ botName: this.name || 'bot' });
+            this.bot._metrics = this.metrics;
+        } catch (e) {
+            console.error('Metrics init failed:', e);
+            this.metrics = null;
         }
 
         this.bot.on('login', () => {
@@ -869,6 +879,9 @@ export class Agent {
         this.bot.on('death', () => {
             this.actions.cancelResume();
             this.actions.stop();
+            try {
+                this.metrics?.recordDeath({ pos: this.bot.entity?.position });
+            } catch { /* metrics must never break death handling */ }
         });
         this.bot.on('kicked', (reason) => {
             if (!this._disconnectHandled) {
@@ -879,6 +892,7 @@ export class Agent {
         this.bot.on('messagestr', async (message, _, jsonMsg) => {
             if (jsonMsg.translate && jsonMsg.translate.startsWith('death') && message.startsWith(this.name)) {
                 console.log('Agent died: ', message);
+                try { this.metrics?.setLastCause(causeFromDeathMessage(message, this.name)); } catch { /* optional */ }
                 let death_pos = this.bot.entity.position;
                 this.memory_bank.rememberPlace('last_death_position', death_pos.x, death_pos.y, death_pos.z);
                 let death_pos_text = null;

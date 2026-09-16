@@ -11,6 +11,7 @@ import { GoalBlock } from '../baritone/goals.js';
 import { profileDocs, getProfileName } from '../baritone/settings.js';
 import { getStorageIndex, saveStorageIndex } from '../storage/index.js';
 import { getSpotRegistry } from '../storage/placement.js';
+import { getMetrics } from '../library/metrics.js';
 import { getHome } from '../navigation/home.js';
 import { hazardReport, scanHazards } from '../navigation/hazards.js';
 import * as skills from '../library/skills.js';
@@ -347,9 +348,19 @@ export const queryList = [
             if (!spots.length) return pad('No named storage spots yet. Point the bot at a chest with !nameStorage <name>.');
             const lines = [`STORAGE SPOTS (${spots.length})`];
             for (const s of spots) {
-                lines.push(`- ${s.name}: ${s.type} at (${s.x}, ${s.y}, ${s.z})`);
+                const res = Array.isArray(s.accepts) && s.accepts.length ? ` [reserved: ${s.accepts.join(', ')}]` : '';
+                lines.push(`- ${s.name}: ${s.type} at (${s.x}, ${s.y}, ${s.z})${res}`);
             }
             return pad(lines.join('\n'));
+        }
+    },
+    {
+        name: "!metrics",
+        description: "Show survival metrics: total deaths, top causes, last death position, session uptime and death rate.",
+        perform: function (agent) {
+            const metrics = getMetrics(agent);
+            if (!metrics) return pad('Metrics not available (bot not ready).');
+            return pad(metrics.summarize());
         }
     },
     {

@@ -14,6 +14,8 @@ import pf from 'mineflayer-pathfinder';
 import settings from '../../../settings.js';
 import { createRng } from '../humanlike/rng.js';
 import { gotoGoal } from '../baritone/baritone.js';
+import { scanHazards } from './hazards.js';
+import { avoidZonesFromHazards, inAvoidZone } from './route_choice.js';
 
 export const CHUNK_SIZE = 16;
 export const MAX_VISITED = 2048;
@@ -105,11 +107,12 @@ export class ExplorationState {
  * Pure given (state, rng) — no bot access, fully testable.
  * @returns {{x:number, z:number, ring:number, angleDeg:number}}
  */
-export function nextFrontierGoal(state, { rng, ringOverride = null } = {}) {
+export function nextFrontierGoal(state, { rng, ringOverride = null, avoid = [] } = {}) {
     const _rng = rng || createRng('frontier');
     const origin = state.origin ?? { x: 0, z: 0 };
     const candidates = 8;
     let ring = ringOverride ?? state.ring;
+    let avoidedFallback = null; // best unvisited candidate that sits in an avoid-zone
 
     for (let expand = 0; expand < MAX_RING; expand++) {
         const r = Math.min(MAX_RING, ring + expand) * CHUNK_SIZE;
@@ -118,13 +121,25 @@ export function nextFrontierGoal(state, { rng, ringOverride = null } = {}) {
             const angle = angleDeg * Math.PI / 180;
             const x = Math.round(origin.x + Math.cos(angle) * r);
             const z = Math.round(origin.z + Math.sin(angle) * r);
-            if (!state.isVisited(x, z)) {
-                if (ringOverride == null && ring + expand !== state.ring) state.ring = Math.min(MAX_RING, ring + expand);
-                return { x, z, ring: Math.min(MAX_RING, ring + expand), angleDeg };
+            if (state.isVisited(x, z)) continue;
+            const goal = { x, z, ring: Math.min(MAX_RING, ring + expand), angleDeg };
+            // risk-aware: steer around avoid-zones when any safe option exists
+            if (avoid?.length && inAvoidZone(x, z, avoid)) {
+                avoidedFallback ??= goal;
+                continue;
             }
+            if (ringOverride == null && ring + expand !== state.ring) state.ring = Math.min(MAX_RING, ring + expand);
+            return goal;
         }
         // every candidate on this ring was visited -> expand
         if (ringOverride != null) break;
+    }
+
+    // everything reachable is either visited or avoided: take the avoided
+    // candidate rather than giving up exploration entirely
+    if (avoidedFallback) {
+        if (ringOverride == null && avoidedFallback.ring !== state.ring) state.ring = avoidedFallback.ring;
+        return avoidedFallback;
     }
 
     // fully explored fallback: a random bearing at max ring
@@ -181,9 +196,16 @@ export async function explore(agent, opts = {}) {
     let completed = 0;
     let failed = null;
 
+    // risk-aware exploration: steer frontier goals around local hazards
+    let avoid = [];
+    if (opts.avoidHazards !== false) {
+        try { avoid = avoidZonesFromHazards(scanHazards(bot, { radius: 16 })); }
+        catch { avoid = []; }
+    }
+
     for (let i = 0; i < legs; i++) {
         if (bot.interrupt_code) break;
-        const target = nextFrontierGoal(state, { rng, ringOverride: opts.ring ?? null });
+        const target = nextFrontierGoal(state, { rng, ringOverride: opts.ring ?? null, avoid });
         const here = bot.entity.position;
         const goal = new pf.goals.GoalNear(target.x, Math.round(here.y), target.z, 4);
         try {

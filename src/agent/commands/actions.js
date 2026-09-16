@@ -729,6 +729,26 @@ export const actionsList = [
         }
     },
     {
+        name: '!reserveStorage',
+        description: 'Reserve a named storage spot for specific item types so inventory unloads route them there. Pass no items to clear the reservation.',
+        params: {
+            'name': { type: 'string', description: 'The storage spot to reserve (must exist — see !storageSpots).' },
+            'item_types': { type: 'string', description: 'Comma or space separated item types, e.g. "iron_ingot,gold_ingot". Empty to clear.' },
+        },
+        perform: async function (agent, name, item_types) {
+            const registry = getSpotRegistry(agent);
+            if (!registry) return 'Storage spots not available (bot not ready).';
+            const items = String(item_types ?? '')
+                .split(/[,\s]+/)
+                .map(s => s.trim().toLowerCase())
+                .filter(Boolean);
+            const spot = registry.reserve(name, items);
+            if (!spot) return `No storage spot named "${name}" — create one first with !nameStorage.`;
+            if (!spot.accepts) return `Reservation cleared for "${spot.name}".`;
+            return `Reserved "${spot.name}" for: ${spot.accepts.join(', ')}.`;
+        }
+    },
+    {
         name: '!trustPlayer',
         description: 'Mark a player as a trusted friend in social memory. Friends get warm greetings and no hostility warnings.',
         params: {

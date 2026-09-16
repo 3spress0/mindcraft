@@ -648,6 +648,15 @@ server already provides.
   `!nameStorage tools` standing next to a chest; `!storageSpots` lists them.
   When no chest is within 32 blocks, inventory unloads route to the nearest
   known spot (named spots, or the last chest that worked) within 64 blocks.
+* **Multi-chest load balancing** — instead of cramming everything into the
+  nearest chest, the unload executor ranks every chest in range by estimated
+  free capacity (from the storage index — legit, since it only reflects what
+  the bot has seen in its own container windows) against distance, then
+  spreads the deposit list across the best targets so no single chest
+  overflows.
+* **Storage reservation** — claim a named spot for specific item types with
+  `!reserveStorage tools iron_ingot,gold_ingot`; future unloads route those
+  items to that chest first. Pass no items to clear the reservation.
 * **Risk-aware planning** — before every autonomous action the loop assesses
   local danger (hostile mobs in range, night) against the bot's risk posture.
   Under high risk, risky work (exploration, farming) is held — and recorded
@@ -658,6 +667,10 @@ server already provides.
   profile and skips idle exploration, balanced uses default paths and
   explores when idle, bold uses fast paths (which may dig) and explores. The
   posture also scales the risk assessment (bold tolerates more, cautious less).
+* **Risk-aware route selection** — `navigation/route_choice.js` scores routes
+  by how much hazard corridor they cross (hard hazards count double) and picks
+  the safer one; autonomous exploration scans local hazards and steers its
+  frontier goals around them as avoid-zones.
 
 ```text
 !setRisk cautious     # slow and careful
@@ -665,6 +678,19 @@ server already provides.
 !setRisk bold         # fast, exploratory, may dig
 !nameStorage tools    # remember the nearest chest as "tools"
 !storageSpots         # list remembered storage spots
+!reserveStorage tools iron_ingot,gold_ingot   # route these items to "tools"
+```
+
+# Survival Metrics
+
+`src/agent/library/metrics.js` tracks how the bot is actually doing, persisted
+across sessions at `bots/<name>/metrics.json`: total deaths, a per-cause
+breakdown (refined from the server's death message), the last death position,
+session uptime, and deaths-per-hour. It is wired to the bot's death events
+automatically — benchmarks can assert on it, and you can just ask:
+
+```text
+!metrics
 ```
 
 Four new social-flavored personality presets are also available via

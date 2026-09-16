@@ -202,7 +202,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Dynamic replanning — recovery + replan commands
 * [ ] Resource-aware planning
 * [ ] Time-aware planning
-* [x] Risk-aware planning — `autonomy/risk.js` assesses hostiles/night vs. posture and holds risky work while safe upkeep proceeds
+* [x] Risk-aware planning — `autonomy/risk.js` assesses hostiles/night vs. posture and holds risky work; `navigation/route_choice.js` picks safer routes and steers exploration around hazard avoid-zones
 * [ ] Priority handling
 * [x] Interrupt handling
 * [~] Background tasks — modes act as background behaviors
@@ -227,7 +227,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Resource caching
 * [ ] Resource reservation
 * [x] Storage lookup — `!findItem` over the container index
-* [ ] Storage reservation
+* [x] Storage reservation — `!reserveStorage` claims a named spot for item types; unloads route matching items there
 
 ### Mining
 
@@ -292,8 +292,8 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Withdraw logic — `!takeFromChest`
 * [ ] Sorting
 * [ ] Stack management
-* [~] Storage optimization — autonomy loop deposits bulk non-essentials into the nearest chest
-* [~] Overflow handling — `inventory_full` need auto-unloads before slot starvation; no multi-chest routing yet
+* [x] Storage optimization — unload balances deposits across multiple chests by estimated free capacity (`storage/balancing.js`)
+* [x] Overflow handling — `inventory_full` need auto-unloads with multi-chest balancing, reservations, and spot routing
 * [x] Named storage locations — `storage/placement.js` registry, persisted per bot
 * [x] Storage-aware planning — unload routes deposits to named spots / last-used chest
 
@@ -473,7 +473,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Humanlike-behavior benchmark — `tests/humanlike_benchmark.test.js`: 8 deterministic scenarios (interrupt-resume, route staleness, frontier coverage, need prioritization, reaction spam resistance, delay envelopes, idle stability, glance bounds)
 * [x] Efficiency metrics
 * [x] Completion metrics
-* [ ] Death metrics
+* [x] Death metrics — `library/metrics.js`: persistent deaths/causes/positions, `!metrics`, wired to bot death events
 * [ ] Replan metrics
 * [ ] Movement metrics
 * [ ] Resource-waste metrics
@@ -642,6 +642,10 @@ guards all of it deterministically in `tests/humanlike_benchmark.test.js`,
 autonomous farming + named storage routing landed in batch 9
 (`autonomy/farming.js`, `storage/placement.js`, `autonomy/risk.js`), and a
 multi-day survival benchmark now guards the decision layer
-(`tests/survival_benchmark.test.js`). Remaining frontier: multi-chest load
-balancing, storage reservation, risk-aware route *selection*, death metrics,
-and LLM-in-the-loop scenario benchmarks.
+(`tests/survival_benchmark.test.js`), storage is load-balanced and
+reservation-aware (`storage/balancing.js`, `!reserveStorage`), exploration
+steers around hazard avoid-zones (`navigation/route_choice.js`), and deaths
+are tracked persistently (`library/metrics.js`, `!metrics`). Remaining
+frontier: chest-side sorting/stack management, storage-aware *planning*
+(fetch routes), LLM-in-the-loop scenario benchmarks, and navigation/death
+rate benchmarks.

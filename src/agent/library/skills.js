@@ -975,19 +975,19 @@ export async function discard(bot, itemName, num=-1) {
     return true;
 }
 
-export async function putInChest(bot, itemName, num=-1) {
+export async function putInChestAt(bot, chest, itemName, num=-1) {
     /**
-     * Put the given item in the nearest chest.
+     * Put the given item into a SPECIFIC chest block.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {Block} chest, the chest block to deposit into.
      * @param {string} itemName, the item or block name to put in the chest.
      * @param {number} num, the number of items to put in the chest. Defaults to -1, which puts all items.
      * @returns {Promise<boolean>} true if the item was put in the chest, false otherwise.
      * @example
-     * await skills.putInChest(bot, "oak_log");
+     * await skills.putInChestAt(bot, chestBlock, "oak_log");
      **/
-    let chest = world.getNearestBlock(bot, 'chest', 32);
-    if (!chest) {
-        log(bot, `Could not find a chest nearby.`);
+    if (!chest?.position) {
+        log(bot, `No chest block to deposit into.`);
         return false;
     }
     let item = bot.inventory.findInventoryItem(itemName);
@@ -1007,6 +1007,24 @@ export async function putInChest(bot, itemName, num=-1) {
     } catch (e) { void e; }
     log(bot, `Successfully put ${to_put} ${itemName} in the chest.`);
     return true;
+}
+
+export async function putInChest(bot, itemName, num=-1) {
+    /**
+     * Put the given item in the nearest chest.
+     * @param {MinecraftBot} bot, reference to the minecraft bot.
+     * @param {string} itemName, the item or block name to put in the chest.
+     * @param {number} num, the number of items to put in the chest. Defaults to -1, which puts all items.
+     * @returns {Promise<boolean>} true if the item was put in the chest, false otherwise.
+     * @example
+     * await skills.putInChest(bot, "oak_log");
+     **/
+    let chest = world.getNearestBlock(bot, 'chest', 32);
+    if (!chest) {
+        log(bot, `Could not find a chest nearby.`);
+        return false;
+    }
+    return putInChestAt(bot, chest, itemName, num);
 }
 
 export async function takeFromChest(bot, itemName, num=-1) {

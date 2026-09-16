@@ -49,12 +49,14 @@ export class StorageSpotRegistry {
     add(name, pos, type = 'chest') {
         const clean = sanitizeName(name);
         if (!clean || !pos) return null;
+        const existing = this.spots.get(clean);
         this.spots.set(clean, {
             name: clean,
             x: Math.floor(pos.x),
             y: Math.floor(pos.y),
             z: Math.floor(pos.z),
             type: String(type || 'chest'),
+            accepts: existing?.accepts ?? null, // preserve reservations on re-add
             updatedAt: this._now()
         });
         // prune overflow: drop oldest non-internal spots first
@@ -74,6 +76,36 @@ export class StorageSpotRegistry {
     get(name) {
         const clean = sanitizeName(name);
         return clean ? this.spots.get(clean) ?? null : null;
+    }
+
+    /**
+     * Reserve a named spot for specific item types (storage reservation).
+     * Pass an empty list to clear the reservation.
+     * @returns the updated spot, or null if the spot doesn't exist
+     */
+    reserve(name, itemTypes = []) {
+        const clean = sanitizeName(name);
+        const spot = clean ? this.spots.get(clean) : null;
+        if (!spot) return null;
+        const accepts = (itemTypes ?? [])
+            .map(t => String(t ?? '').trim().toLowerCase())
+            .filter(Boolean)
+            .slice(0, 32);
+        spot.accepts = accepts.length ? [...new Set(accepts)] : null;
+        spot.updatedAt = this._now();
+        this.persist();
+        return spot;
+    }
+
+    /** All reservations: spots that only accept specific item types. */
+    reservations() {
+        return [...this.spots.values()].filter(s => Array.isArray(s.accepts) && s.accepts.length);
+    }
+
+    /** Find the reservation (if any) that claims an item type. */
+    reservationFor(itemName) {
+        const item = String(itemName ?? '').toLowerCase();
+        return this.reservations().find(s => s.accepts.includes(item)) ?? null;
     }
 
     remove(name) {
@@ -127,6 +159,7 @@ export class StorageSpotRegistry {
                     name: String(s.name).slice(0, 24),
                     x: Math.floor(s.x), y: Math.floor(s.y), z: Math.floor(s.z),
                     type: String(s.type || 'chest'),
+                    accepts: Array.isArray(s.accepts) ? s.accepts.slice(0, 32) : null,
                     updatedAt: Number(s.updatedAt) || 0
                 });
             }
