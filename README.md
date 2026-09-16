@@ -476,8 +476,9 @@ depending on Baritone itself, which would need a separate Java process).
   `heuristic` / `isEnd` interface mineflayer-pathfinder expects.
 * **Movement profiles** — named presets that tune the pathfinder the way
   Baritone's `#set` options do: `default`, `legit` (no sprinting/parkour/digging,
-  human-like), `fast` (sprint + parkour + digging), and `builder` (never dig,
-  cheap placement). Profiles are stored per-bot and apply to all navigation.
+  human-like), `fast` (sprint + parkour + digging), `builder` (never dig,
+  cheap placement), and `safe` (legit + hazard avoidance). Profiles are stored
+  per-bot and apply to all navigation.
 * **Path preview** — dry-run a path without moving and report whether it exists
   and how long it is, like Baritone's `#calc`.
 * **Mining** — `#mine`-style behavior: locate the nearest matching block, path
@@ -493,6 +494,56 @@ depending on Baritone itself, which would need a separate Java process).
 !baritoneStatus
 !mineBlocks iron_ore 8
 ```
+
+# Navigation Intelligence
+
+`src/agent/navigation/` adds three Baritone-inspired capabilities that make
+travel cheaper, safer, and more self-directed.
+
+## Hazard-aware navigation
+
+`hazards.js` classifies danger blocks into **hard** hazards (lava, fire, magma
+blocks, campfires, berry bushes, cacti, wither roses, powder snow) and
+**soft** hazards (soul sand, cobwebs, honey blocks). The `safe` movement
+profile hardens the pathfinder's `blocksToAvoid` set with all of these, so
+routes steer around them instead of through them.
+
+```text
+!hazards          # scan the local area and list dangers with distance
+!hazards 20       # with a custom radius (capped at 24)
+!setPathProfile safe
+```
+
+## Route caching
+
+Successful trips are remembered (downsampled waypoint corridors, per
+start/goal/profile) in `bots/<name>/route_cache.json`. When the bot is asked
+to make the same trip again, the cached route is **re-verified against the
+live world first** — sampled waypoints are checked for new lava, removed
+ground, etc. — and only replayed if still valid; otherwise the entry is
+dropped and normal pathfinding runs. Replay never blocks: any hiccup falls
+back to the regular two-probe navigation. TTL (default 15 min), entry cap
+(default 64) and the master switch live under `settings.navigation.route_cache`.
+
+```text
+!routeCache        # how many routes are remembered, TTL, file location
+!routeCache clear  # drop the cache
+```
+
+## Frontier exploration
+
+`exploration.js` keeps a persisted record of chunks the bot has stood in
+(`bots/<name>/exploration.json`) and picks frontier goals on an expanding
+ring around its origin — always preferring directions with no recorded
+visits. Direction choice comes from the seeded personality RNG, so two bots
+explore differently but each bot is reproducible.
+
+```text
+!explore 3         # walk 3 outward legs with legit, hazard-aware movement
+```
+
+Exploration stops cleanly on interruption, records chunks reached per leg, and
+expands the ring automatically once the current one is fully visited.
 
 # Legit Awareness (Radar)
 

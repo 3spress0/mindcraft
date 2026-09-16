@@ -3,8 +3,10 @@ import * as world from "./world.js";
 import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import settings from "../../../settings.js";
-import { applyProfile, getProfileName } from "../baritone/settings.js";
+import { applyProfile, getProfileName, profileAvoidsHazards } from "../baritone/settings.js";
 import * as humanlike from "../humanlike/interaction.js";
+import { hardenMovements } from "../navigation/hazards.js";
+import { RouteCache, routeCacheSettings, snap, downsample, verifyRoute } from "../navigation/route_cache.js";
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -1192,11 +1194,22 @@ export async function giveToPlayer(bot, itemType, username, num=1) {
 export async function goToGoal(bot, goal) {
     /**
      * Navigate to the given goal. Use doors and attempt minimally destructive movements.
+     * Successful routes are cached and replayed (after world-verification) so repeat
+     * trips skip the pathfinding probes; hazard-aware profiles route around dangers.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {pf.goals.Goal} goal, the goal to navigate to.
      **/
 
     const profile = getProfileName(bot);
+    const routeStart = snap(bot.entity?.position);
+    const routeEnd = goalPosForCache(goal);
+
+    // Route cache: replay a verified recent path before paying for probes.
+    try {
+        if (routeStart && routeEnd && await tryReplayCachedRoute(bot, goal, profile, routeStart, routeEnd)) {
+            return true;
+        }
+    } catch (e) { /* caching must never break navigation */ }
 
     const nonDestructiveMovements = new pf.Movements(bot);
     const dontBreakBlocks = ['glass', 'glass_pane'];
@@ -1205,22 +1218,31 @@ export async function goToGoal(bot, goal) {
     }
     // Baritone-style profile tweaks (default profile == the historic costs).
     applyProfile(nonDestructiveMovements, profile);
+    if (profileAvoidsHazards(profile)) hardenMovements(nonDestructiveMovements, bot);
 
     const destructiveMovements = new pf.Movements(bot);
     if (profile !== 'default') applyProfile(destructiveMovements, profile);
+    if (profileAvoidsHazards(profile)) hardenMovements(destructiveMovements, bot);
 
     let final_movements = destructiveMovements;
+    let foundPath = null;
 
     const pathfind_timeout = 1000;
-    if (await bot.pathfinder.getPathTo(nonDestructiveMovements, goal, pathfind_timeout).status === 'success') {
+    const ndResult = await bot.pathfinder.getPathTo(nonDestructiveMovements, goal, pathfind_timeout);
+    if (ndResult.status === 'success') {
         final_movements = nonDestructiveMovements;
+        foundPath = ndResult.path;
         log(bot, `Found non-destructive path.`);
     }
-    else if (await bot.pathfinder.getPathTo(destructiveMovements, goal, pathfind_timeout).status === 'success') {
-        log(bot, `Found destructive path.`);
-    }
     else {
-        log(bot, `Path not found, but attempting to navigate anyway using destructive movements.`);
+        const dResult = await bot.pathfinder.getPathTo(destructiveMovements, goal, pathfind_timeout);
+        if (dResult.status === 'success') {
+            foundPath = dResult.path;
+            log(bot, `Found destructive path.`);
+        }
+        else {
+            log(bot, `Path not found, but attempting to navigate anyway using destructive movements.`);
+        }
     }
 
     const doorCheckInterval = startDoorInterval(bot);
@@ -1229,12 +1251,87 @@ export async function goToGoal(bot, goal) {
     try {
         await bot.pathfinder.goto(goal);
         clearInterval(doorCheckInterval);
+        rememberRoute(bot, profile, routeStart, routeEnd, foundPath);
         return true;
     } catch (err) {
         clearInterval(doorCheckInterval);
         // we need to catch so we can clean up the door check interval, then rethrow the error
         throw err;
     }
+}
+
+/** Extract a cacheable {x,y,z} from a pathfinder goal (GoalNear/GoalBlock/GoalXZ). */
+function goalPosForCache(goal) {
+    if (!goal || typeof goal.x !== 'number' || typeof goal.z !== 'number') return null;
+    return { x: goal.x, y: goal.y ?? 0, z: goal.z };
+}
+
+/** Lazily attach the per-bot route cache (respects settings.navigation.route_cache). */
+function getRouteCache(bot) {
+    if (bot._route_cache_off) return null;
+    const cfg = routeCacheSettings();
+    if (!cfg.enabled) return null;
+    if (!bot._route_cache) {
+        bot._route_cache = new RouteCache({ botName: bot.username || 'bot' }).load();
+    }
+    return bot._route_cache;
+}
+
+/**
+ * Attempt to walk a cached, still-valid route. Returns true only on full
+ * arrival; any hiccup returns false so normal pathfinding takes over.
+ */
+async function tryReplayCachedRoute(bot, goal, profile, from, to) {
+    const cache = getRouteCache(bot);
+    if (!cache) return false;
+    const entry = cache.get(from, to, profile);
+    if (!entry) return false;
+    const check = verifyRoute(bot, entry.waypoints);
+    if (!check.valid) {
+        cache.invalidate(from, to, profile);
+        return false;
+    }
+
+    const movements = new pf.Movements(bot);
+    applyProfile(movements, profile);
+    if (profileAvoidsHazards(profile)) hardenMovements(movements, bot);
+    bot.pathfinder.setMovements(movements);
+
+    // stride through waypoints with a bounded number of sub-goals
+    const stride = Math.max(1, Math.ceil(entry.waypoints.length / 16));
+    for (let i = stride; i < entry.waypoints.length; i += stride) {
+        if (bot.interrupt_code) return false;
+        const w = entry.waypoints[i];
+        await bot.pathfinder.goto(new pf.goals.GoalNear(w.x, w.y, w.z, 2));
+    }
+    await bot.pathfinder.goto(goal);
+    log(bot, `Followed cached route (${entry.waypoints.length} waypoints).`);
+    return true;
+}
+
+/** Store a successful route for future replays. Never throws. */
+function rememberRoute(bot, profile, from, to, pathNodes) {
+    try {
+        const cache = getRouteCache(bot);
+        if (!cache || !from || !to || !Array.isArray(pathNodes) || pathNodes.length < 4) return;
+        cache.put(from, to, profile, { waypoints: downsample(pathNodes) });
+    } catch (e) { void e; }
+}
+
+/** Stats for !routeCache. */
+export function routeCacheStats(bot) {
+    try {
+        const cache = getRouteCache(bot);
+        return cache ? cache.stats() : null;
+    } catch (e) { return null; }
+}
+
+/** Clear the bot's cached routes; returns how many were dropped. */
+export function clearRouteCache(bot) {
+    try {
+        const cache = getRouteCache(bot);
+        return cache ? cache.clear() : 0;
+    } catch (e) { return 0; }
 }
 
 let _doorInterval = null;

@@ -7,6 +7,7 @@ import { mineBlocks as baritoneMineBlocks, status as baritoneStatus } from '../b
 import { setProfileName } from '../baritone/settings.js';
 import { saveAreaAsLitematic, saveAreaAsSchem } from '../schematics/capture.js';
 import { setHome, getHome } from '../navigation/home.js';
+import { explore } from '../navigation/exploration.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -402,9 +403,9 @@ export const actionsList = [
     },
     {
         name: '!setPathProfile',
-        description: 'Set the Baritone-style movement profile used for all pathfinding. Options: default (balanced), legit (no sprint/parkour/digging, human-like), fast (sprint+parkour+digging), builder (never dig, cheap placement).',
+        description: 'Set the Baritone-style movement profile used for all pathfinding. Options: default (balanced), legit (no sprint/parkour/digging, human-like), fast (sprint+parkour+digging), builder (never dig, cheap placement), safe (legit + routes around hazards like magma, berry bushes, cacti, campfires).',
         params: {
-            'profile': { type: 'string', description: 'One of: default, legit, fast, builder.' },
+            'profile': { type: 'string', description: 'One of: default, legit, fast, builder, safe.' },
         },
         perform: async function (agent, profile) {
             try {
@@ -676,6 +677,17 @@ export const actionsList = [
             }
             await skills.goToPosition(agent.bot, pos.x, pos.y, pos.z, 2);
             skills.log(agent.bot, `Arrived home at (${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)}).`);
+        })
+    },
+    {
+        name: '!explore',
+        description: 'Autonomously explore the surrounding area: walk outward toward unvisited frontier chunks on an expanding ring, recording what is seen. Uses legit, hazard-aware movement and stops cleanly if interrupted.',
+        params: {
+            'legs': { type: 'int', description: 'How many exploration legs (outward trips) to walk.', domain: [1, 8] },
+        },
+        perform: runAsAction(async (agent, legs) => {
+            const summary = await explore(agent, { legs: legs ?? undefined });
+            skills.log(agent.bot, summary);
         })
     },
     {

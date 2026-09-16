@@ -59,6 +59,20 @@ export const PROFILES = {
             allowSprinting: true,
         },
     },
+    safe: {
+        description: 'Hazard-aware: legit movement plus routing around magma, berry bushes, cacti, campfires, soul sand and friends.',
+        hazards: true,
+        tweaks: {
+            allowSprinting: false,
+            allowParkour: false,
+            allowFreeMotion: false,
+            canDig: false,
+            allow1by1towers: false,
+            maxDropDown: 2,
+            digCost: 1,
+            placeCost: 2,
+        },
+    },
 };
 
 export const PROFILE_NAMES = Object.keys(PROFILES);
@@ -89,6 +103,11 @@ export function applyProfile(movements, name) {
 /** Which profile is active for this bot (default unless set). */
 export function getProfileName(bot) {
     return bot?._baritone_profile || FALLBACK_PROFILE;
+}
+
+/** Whether the named profile routes around extra hazard blocks. */
+export function profileAvoidsHazards(name) {
+    return PROFILES[name]?.hazards === true;
 }
 
 /** Set the active profile for a bot. Throws on unknown names. */

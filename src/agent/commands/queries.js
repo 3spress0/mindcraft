@@ -11,6 +11,8 @@ import { GoalBlock } from '../baritone/goals.js';
 import { profileDocs, getProfileName } from '../baritone/settings.js';
 import { getStorageIndex, saveStorageIndex } from '../storage/index.js';
 import { getHome } from '../navigation/home.js';
+import { hazardReport, scanHazards } from '../navigation/hazards.js';
+import * as skills from '../library/skills.js';
 
 const pad = (str) => {
     return '\n' + str + '\n';
@@ -224,6 +226,32 @@ export const queryList = [
         description: "Radar sweep: exact positions, distances and compass bearings of nearby players, mobs, dropped items and storage containers. Use this to know WHERE everyone and everything is.",
         perform: function (agent) {
             return pad(radarModule.radarReport(agent.bot));
+        }
+    },
+    {
+        name: "!hazards",
+        description: "Scan the local area for navigation hazards (lava, fire, magma, berry bushes, cacti, campfires, soul sand, cobwebs) with positions and distances. Useful before building or pathing somewhere.",
+        params: {
+            'radius': { type: 'int', description: 'Scan radius in blocks (1-24, default 12).', domain: [1, 24] },
+        },
+        perform: function (agent, radius) {
+            return pad(hazardReport(agent.bot, { radius: radius || 12 }));
+        }
+    },
+    {
+        name: "!routeCache",
+        description: "Show the navigation route cache (successful paths remembered to skip pathfinding on repeat trips), or clear it.",
+        params: {
+            'action': { type: 'string', description: 'Optional: pass "clear" to empty the cache; otherwise shows stats.' },
+        },
+        perform: function (agent, action) {
+            if (String(action || '').toLowerCase() === 'clear') {
+                const n = skills.clearRouteCache(agent.bot);
+                return pad(`Route cache cleared (${n} route(s) dropped).`);
+            }
+            const stats = skills.routeCacheStats(agent.bot);
+            if (!stats) return pad('Route caching is disabled (settings.navigation.route_cache.enabled).');
+            return pad(`Route cache: ${stats.entries}/${stats.maxEntries} routes remembered (TTL ${Math.round(stats.ttlMs / 60000)} min). Stored at ${stats.file}.`);
         }
     },
     {

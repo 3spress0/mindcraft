@@ -101,6 +101,21 @@ const settings = {
         "summary_max_lines": 40,   // facts injected into planner prompts
     },
 
+    // Navigation: hazard-aware movement, route caching, and frontier exploration.
+    // See src/agent/navigation/.
+    "navigation": {
+        "route_cache": {
+            "enabled": true,        // remember successful routes and replay them (verified against the world first)
+            "ttl_minutes": 15,      // cached routes older than this are ignored
+            "max_entries": 64       // bounded LRU-style prune
+        },
+        "exploration": {
+            "default_legs": 3,      // outward trips per !explore when no count is given
+            "max_ring": 12,         // frontier ring cap (ring * 16 blocks out)
+            "profile": "legit"      // movement profile used while exploring
+        }
+    },
+
     // Humanlike locomotion layered on top of mineflayer-pathfinder (the mineflayer
     // equivalent of Baritone). Removes robotic movement tells: instant head snaps
     // with a perfectly level stare, nonstop sprinting, zero reaction time, and a

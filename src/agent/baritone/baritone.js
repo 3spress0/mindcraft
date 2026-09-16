@@ -18,13 +18,16 @@
 import pf from 'mineflayer-pathfinder';
 import * as world from '../library/world.js';
 import * as goals from './goals.js';
-import { applyProfile, getProfileName } from './settings.js';
+import { applyProfile, getProfileName, profileAvoidsHazards } from './settings.js';
 import * as humanlike from '../humanlike/interaction.js';
+import { hardenMovements } from '../navigation/hazards.js';
 
 /** Build a Movements instance with the bot's active (or given) profile. */
 export function buildMovements(bot, profile = null) {
     const movements = new pf.Movements(bot);
-    applyProfile(movements, profile || getProfileName(bot));
+    const active = profile || getProfileName(bot);
+    applyProfile(movements, active);
+    if (profileAvoidsHazards(active)) hardenMovements(movements, bot);
     return movements;
 }
 

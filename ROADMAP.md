@@ -119,13 +119,13 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Held-item awareness
 * [ ] Movement-state awareness
 * [ ] Chunk awareness
-* [~] Hazard detection — self_preservation covers lava/fire/falling blocks/drowning
+* [x] Hazard detection — `navigation/hazards.js` classifies hard/soft hazards + `scanHazards`; self_preservation covers lava/fire/falling/drowning
 
 ### Navigation
 
 * [x] Baritone-style goals — `src/agent/baritone/goals.js`
 * [x] Goal composites — `GoalAny`/`GoalAll`/`GoalInvert`
-* [x] Movement profiles — `baritone/settings.js` (default/legit/fast/builder)
+* [x] Movement profiles — `baritone/settings.js` (default/legit/fast/builder/safe)
 * [x] Path preview — `!previewPath`
 * [ ] Path visualization
 * [x] Dynamic replanning — pathfinder recompute + `GoalFollow.hasChanged`
@@ -138,10 +138,10 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Portal locations
 * [x] Build locations — persisted `npc.data.built` corners
 * [ ] Safe-zone locations
-* [ ] Route caching
-* [ ] Route invalidation
+* [x] Route caching — `navigation/route_cache.js`: successful paths remembered and replayed (wired into `skills.goToGoal`)
+* [x] Route invalidation — replayed routes re-verified against the live world; stale/blocked entries dropped (TTL + `verifyRoute`)
 * [x] Dynamic obstacle handling — pathfinder re-plans on world changes
-* [~] Hazard-aware pathfinding — default Movements avoid fire/lava/cobweb + hazard blocks added by baritone layer
+* [x] Hazard-aware pathfinding — `safe` profile + `navigation/hazards.js` hardens Movements around magma, berry bushes, cacti, campfires, soul sand, cobwebs
 * [x] Lava avoidance — `blocksToAvoid`
 * [x] Water handling — liquid movements + drowning response
 * [~] Fall-risk evaluation — `maxDropDown` per profile
@@ -175,7 +175,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Player movement history
 * [x] Mob sightings
 * [x] Item sightings — short-TTL item facts
-* [ ] Exploration history
+* [x] Exploration history — `navigation/exploration.js` persists visited chunks per bot
 * [~] Known dangerous locations — threat facts carry positions; no durable danger map
 * [ ] Known safe locations
 * [x] Known useful locations — location/structure/resource facts
@@ -521,7 +521,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] `!craft` — `!craftRecipe`
 * [x] `!gather` — `!collectBlocks`/`!mineBlocks`
 * [x] `!build` — `!buildSchematic`
-* [ ] `!explore`
+* [x] `!explore` — frontier exploration (legit/hazard-aware movement)
 * [x] `!follow` — `!followPlayer`
 * [x] `!stop`
 * [ ] `!debug`
@@ -546,7 +546,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 
 ### Long-term autonomy
 
-* [ ] Autonomous exploration
+* [x] Autonomous exploration — `!explore` walks to unvisited frontier chunks on an expanding ring
 * [~] Autonomous resource gathering — npc item goals; not self-initiated
 * [x] Autonomous crafting — npc item_goal chains
 * [x] Autonomous building — npc build_goal
@@ -623,8 +623,10 @@ The key progression is:
 Current position in that progression: commands/actions are mature, tasks and
 plans are solid with verification and recovery, persistent world knowledge is
 being filled in (world model, container index, waypoints), autonomous behavior
-exists via npc goals + self-prompter, and the deliberate humanlike behavior
-layer has shipped in `src/agent/humanlike/` — seeded personality, behavior
-state machine, LOS-gated attention, interaction focus/timing, and
-context-dependent idle. Remaining frontier: route variety/caching, exploration
-patterns, social profiles, and the autonomous task loop.
+exists via npc goals + self-prompter, the deliberate humanlike behavior layer
+has shipped in `src/agent/humanlike/` (seeded personality, behavior state
+machine, LOS-gated attention, interaction focus/timing, context-dependent
+idle), and navigation intelligence has landed in `src/agent/navigation/`
+(hazard-aware `safe` profile, route caching with world-verified replay, and
+frontier exploration). Remaining frontier: tool durability/replacement
+planning, social profiles, and the larger autonomous task loop.
