@@ -3,6 +3,9 @@ import settings from '../settings.js';
 import convoManager from '../conversation.js';
 import { buildSchematic } from '../npc/schematic_build.js';
 import { Vec3 } from 'vec3';
+import { mineBlocks as baritoneMineBlocks, status as baritoneStatus } from '../baritone/baritone.js';
+import { setProfileName } from '../baritone/settings.js';
+import { saveAreaAsLitematic } from '../schematics/capture.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -329,6 +332,68 @@ export const actionsList = [
             if (result.status === 'error') throw new Error(result.message);
             return result.message;
         })
+    },
+    {
+        name: '!saveArea',
+        description: 'Capture a box of the world (two opposite corners) and save it as a Litematica .litematic file in the build library, so it can be listed, quoted and rebuilt with !buildSchematic.',
+        params: {
+            'name': { type: 'string', description: 'Name for the saved build (no extension needed).' },
+            'x1': { type: 'float', description: 'X of the first corner.', domain: [-Infinity, Infinity] },
+            'y1': { type: 'float', description: 'Y of the first corner.', domain: [-64, 320] },
+            'z1': { type: 'float', description: 'Z of the first corner.', domain: [-Infinity, Infinity] },
+            'x2': { type: 'float', description: 'X of the opposite corner.', domain: [-Infinity, Infinity] },
+            'y2': { type: 'float', description: 'Y of the opposite corner.', domain: [-64, 320] },
+            'z2': { type: 'float', description: 'Z of the opposite corner.', domain: [-Infinity, Infinity] },
+        },
+        perform: async function (agent, name, x1, y1, z1, x2, y2, z2) {
+            try {
+                const res = saveAreaAsLitematic(agent.bot, name, { x: x1, y: y1, z: z1 }, { x: x2, y: y2, z: z2 });
+                const top = Object.entries(res.materials)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 5)
+                    .map(([item, n]) => `${item} x${n}`)
+                    .join(', ');
+                return `Saved "${res.name}.litematic" to the build library: ${res.width}x${res.height}x${res.length}, ${res.totalBlocks} blocks. Main materials: ${top}. It now shows up in !listBuilds and can be rebuilt with !buildSchematic(${res.name}).`;
+            } catch (e) {
+                return `Could not save the area: ${e.message}`;
+            }
+        }
+    },
+    {
+        name: '!mineBlocks',
+        description: 'Baritone-style #mine: find the nearest matching blocks, walk to each one and mine it with the best tool. Use for ores, logs, stone, etc.',
+        params: {
+            'block_type': { type: 'BlockName', description: 'The block type to mine, e.g. iron_ore, oak_log, stone.' },
+            'num': { type: 'int', description: 'How many blocks to mine.', domain: [1, 512] },
+        },
+        perform: runAsAction(async (agent, block_type, num) => {
+            const res = await baritoneMineBlocks(agent.bot, block_type, num || 1, {
+                onProgress: (done, total) => skills.log(agent.bot, `Mined ${done}/${total} ${block_type}.`),
+            });
+            skills.log(agent.bot, `Mining finished: ${res.mined}/${res.requested} ${block_type} (${res.reason}).`);
+        })
+    },
+    {
+        name: '!setPathProfile',
+        description: 'Set the Baritone-style movement profile used for all pathfinding. Options: default (balanced), legit (no sprint/parkour/digging, human-like), fast (sprint+parkour+digging), builder (never dig, cheap placement).',
+        params: {
+            'profile': { type: 'string', description: 'One of: default, legit, fast, builder.' },
+        },
+        perform: async function (agent, profile) {
+            try {
+                setProfileName(agent.bot, profile);
+            } catch (e) {
+                return e.message;
+            }
+            return `Movement profile set to "${profile}". It applies to all future pathfinding; see !listPathProfiles.`;
+        }
+    },
+    {
+        name: '!baritoneStatus',
+        description: 'Show the current Baritone-style movement status: active profile, whether the bot is moving, and the current goal.',
+        perform: async function (agent) {
+            return baritoneStatus(agent.bot);
+        }
     },
     {
         name: '!attack',

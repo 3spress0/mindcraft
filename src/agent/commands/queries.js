@@ -5,6 +5,10 @@ import convoManager from '../conversation.js';
 import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks.js';
 import { library, formatMaterialCounts } from '../schematics/library.js';
 import { load } from 'cheerio';
+import { radarReport } from '../sensors/radar.js';
+import { previewPath } from '../baritone/baritone.js';
+import { GoalBlock } from '../baritone/goals.js';
+import { profileDocs, getProfileName } from '../baritone/settings.js';
 
 const pad = (str) => {
     return '\n' + str + '\n';
@@ -211,6 +215,37 @@ export const queryList = [
                 res += ': none';
             }
             return pad(res);
+        }
+    },
+    {
+        name: "!radar",
+        description: "Radar sweep: exact positions, distances and compass bearings of nearby players, mobs, dropped items and storage containers. Use this to know WHERE everyone and everything is.",
+        perform: function (agent) {
+            return pad(radarReport(agent.bot));
+        }
+    },
+    {
+        name: "!previewPath",
+        description: "Preview a path to the given coordinates WITHOUT moving (Baritone #calc): reports whether a path exists and how long it is under the current movement profile.",
+        params: {
+            'x': { type: 'float', description: 'The x coordinate to path to.', domain: [-Infinity, Infinity] },
+            'y': { type: 'float', description: 'The y coordinate to path to.', domain: [-64, 320] },
+            'z': { type: 'float', description: 'The z coordinate to path to.', domain: [-Infinity, Infinity] },
+        },
+        perform: function (agent, x, y, z) {
+            const res = previewPath(agent.bot, new GoalBlock(x, y, z));
+            if (res.status === 'error') return pad(`Path preview failed: ${res.error}`);
+            if (res.ok) {
+                return pad(`Path preview [${res.profile}] to (${x}, ${y}, ${z}): SUCCESS — ${res.nodes} steps, cost ${Number(res.cost).toFixed(1)}, computed in ${res.timeMs}ms.`);
+            }
+            return pad(`Path preview [${res.profile}] to (${x}, ${y}, ${z}): ${res.status} after ${res.timeMs}ms — no usable path right now. Try !setPathProfile("fast") or different coordinates.`);
+        }
+    },
+    {
+        name: "!listPathProfiles",
+        description: "List the Baritone-style movement profiles (default, legit, fast, builder) and which one is active. Change it with !setPathProfile.",
+        perform: function (agent) {
+            return pad('Movement profiles:\n' + profileDocs(getProfileName(agent.bot)));
         }
     },
     {

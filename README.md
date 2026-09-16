@@ -440,11 +440,77 @@ Useful commands:
 !buildSchematic <name> [x y z rotation]
 ```
 
+```text
+!saveArea <name> <x1> <y1> <z1> <x2> <y2> <z2>
+```
+
 Build state is persisted so interrupted construction can resume.
 
 The build system integrates with the same project planning and verification pipeline rather than bypassing it.
 
 Some complex block orientations and tile-entity contents may require additional handling.
+
+## Litematica capture and export
+
+Schematics are no longer read-only. `!saveArea` captures any box of the live
+world — block-state properties included — and serializes it to a real,
+gzip-compressed `.litematic` file with a proper block-state palette and packed
+bit arrays (entries may straddle 64-bit long boundaries exactly like the
+Litematica mod expects). Captured builds land in the build library, so the bot
+can round-trip them: capture a structure, quote its materials, and rebuild it
+elsewhere — or hand the file to a human using the Litematica mod.
+
+# Baritone-style Movement
+
+Inspired by [Baritone](https://github.com/cabaletta/baritone), this fork adds a
+goal-oriented movement layer on top of mineflayer-pathfinder (rather than
+depending on Baritone itself, which would need a separate Java process).
+
+* **Goal types** — `GoalBlock`, `GoalNear`, `GoalXZ`, `GoalNearXZ`, `GoalY`,
+  `GoalGetToBlock` (stand next to / on top of a block, used for mining reach),
+  `GoalFollow` (tracks a moving entity), `GoalRunAway`, and `GoalAny` /
+  `GoalAll` / `GoalInvert` composites. Every goal implements the
+  `heuristic` / `isEnd` interface mineflayer-pathfinder expects.
+* **Movement profiles** — named presets that tune the pathfinder the way
+  Baritone's `#set` options do: `default`, `legit` (no sprinting/parkour/digging,
+  human-like), `fast` (sprint + parkour + digging), and `builder` (never dig,
+  cheap placement). Profiles are stored per-bot and apply to all navigation.
+* **Path preview** — dry-run a path without moving and report whether it exists
+  and how long it is, like Baritone's `#calc`.
+* **Mining** — `#mine`-style behavior: locate the nearest matching block, path
+  to an adjacent spot, equip the best tool, and dig.
+
+```text
+!setPathProfile legit
+!listPathProfiles
+!previewPath x y z
+!baritoneStatus
+!mineBlocks iron_ore 8
+```
+
+# Legit Awareness (Radar)
+
+Borrowing the *information* side of utility clients like Meteor Client and
+LiquidBounce — not their cheats — the bot can build a detailed picture of its
+surroundings purely from data the server already sends:
+
+* **Player intel** — exact positions, distances, compass bearings, health,
+  sneak/sprint state and held item for every visible player.
+* **Entity intel** — mobs, animals and other entities with position and bearing.
+* **Ground items** — dropped item stacks and where they are.
+* **Storage scan** — positions of nearby chests, furnaces, hoppers, barrels and
+  shulker boxes (locations only; nothing is opened).
+* **Line of sight** — sampled raycast between the bot's eye and a target point.
+
+This is fed into the AI's context so it can reason about *where* things are,
+not just that they exist, and is exposed as a command:
+
+```text
+!radar
+```
+
+This is observational awareness only. It does not send packets the bot isn't
+supposed to send and is not a mechanism for bypassing anti-cheat.
 
 # Humanlike Locomotion
 

@@ -3,6 +3,7 @@ import * as world from "./world.js";
 import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import settings from "../../../settings.js";
+import { applyProfile, getProfileName } from "../baritone/settings.js";
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -1167,15 +1168,18 @@ export async function goToGoal(bot, goal) {
      * @param {pf.goals.Goal} goal, the goal to navigate to.
      **/
 
+    const profile = getProfileName(bot);
+
     const nonDestructiveMovements = new pf.Movements(bot);
     const dontBreakBlocks = ['glass', 'glass_pane'];
     for (let block of dontBreakBlocks) {
         nonDestructiveMovements.blocksCantBreak.add(mc.getBlockId(block));
     }
-    nonDestructiveMovements.placeCost = 2;
-    nonDestructiveMovements.digCost = 10;
+    // Baritone-style profile tweaks (default profile == the historic costs).
+    applyProfile(nonDestructiveMovements, profile);
 
     const destructiveMovements = new pf.Movements(bot);
+    if (profile !== 'default') applyProfile(destructiveMovements, profile);
 
     let final_movements = destructiveMovements;
 
@@ -1436,6 +1440,7 @@ export async function followPlayer(bot, username, distance=4) {
 
     const move = new pf.Movements(bot);
     move.digCost = 10;
+    applyProfile(move, getProfileName(bot));
     bot.pathfinder.setMovements(move);
     let doorCheckInterval = startDoorInterval(bot);
 

@@ -2,6 +2,8 @@
  * full_state.js — resilient version without top-level await cycles.
  */
 
+import { playerPositionSnapshot, groundItems } from '../sensors/radar.js';
+
 let _world = null;
 let _convoManager = null;
 
@@ -39,6 +41,27 @@ async function loadConvo() {
         _convoManager = { getInGameAgents: () => [], inConversation: () => false };
     }
     return _convoManager;
+}
+
+/** Radar player positions, never throwing (sensors must not break state). */
+function safePlayerPositions(bot) {
+    try {
+        return playerPositionSnapshot(bot, 64, 8);
+    } catch {
+        return [];
+    }
+}
+
+/** Radar ground items, reduced to a compact counts map so state stays small. */
+function safeGroundItems(bot) {
+    try {
+        const items = groundItems(bot, 16);
+        const counts = {};
+        for (const it of items) counts[it.item] = (counts[it.item] || 0) + (it.count || 1);
+        return counts;
+    } catch {
+        return {};
+    }
 }
 
 export function getFullState(agent) {
@@ -155,6 +178,10 @@ export function getFullState(agent) {
             humanPlayers: players,
             botPlayers: bots,
             entityTypes: world.getNearbyEntityTypes(bot).filter(t => t !== 'player' && t !== 'item'),
+            // Legit radar sensors (Meteor/LiquidBounce-style awareness):
+            // exact player positions fed into the AI context.
+            playerPositions: safePlayerPositions(bot),
+            groundItems: safeGroundItems(bot),
         },
         modes: {
             summary: bot.modes.getMiniDocs()
