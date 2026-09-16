@@ -143,7 +143,7 @@ const settings = {
         // ---- deliberate behavior layer (seeded, bounded; see src/agent/humanlike/) ----
         "seed": null,             // optional fixed seed; defaults to a hash of the bot's name
         "personality": {
-            "preset": "default",  // default | curious | cautious | energetic | laidback | social
+            "preset": "default",  // default | curious | cautious | energetic | laidback | social | guardian | greeter | scout | worker
             "overrides": {}       // exact trait values, e.g. { "curiosity": 0.9 }
         },
         "interaction": {
@@ -186,7 +186,10 @@ const settings = {
             "explore_when_idle": true,      // frontier-explore when idle long enough
             "explore_idle_s": 60,           // seconds of idle before exploring
             "explore_legs": 2,              // outward legs per autonomous exploration
-            "free_slot_alert": 2            // advisory when inventory has <= this many free slots
+            "free_slot_alert": 2,           // unload to storage when <= this many free slots
+            "min_torches": 8,               // self-maintain at least this many torches
+            "min_food": 5,                  // self-maintain at least this many edible items
+            "max_unload_types": 8           // item types deposited per unload run
         }
     },
 

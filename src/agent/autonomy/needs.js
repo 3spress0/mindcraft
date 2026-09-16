@@ -5,7 +5,7 @@
  * build the snapshot, which keeps this fully testable.
  */
 
-export const NEED_KINDS = ['tool_replace', 'inventory_full', 'explore'];
+export const NEED_KINDS = ['tool_replace', 'inventory_full', 'restock_food', 'restock_torches', 'explore'];
 
 export function autonomyDefaults() {
     return {
@@ -13,7 +13,10 @@ export function autonomyDefaults() {
         explore_when_idle: true,
         explore_idle_s: 60,
         explore_legs: 2,
-        free_slot_alert: 2
+        free_slot_alert: 2,
+        min_torches: 8,
+        min_food: 5,
+        max_unload_types: 8
     };
 }
 
@@ -25,6 +28,8 @@ export function autonomyDefaults() {
  * @param {number} [ctx.idleForMs]    ms since last activity change
  * @param {boolean} [ctx.isNight]
  * @param {boolean} [ctx.hasPendingResume] FSM remembers an interrupted task
+ * @param {object} [ctx.inventoryCounts] item name -> count map
+ * @param {number} [ctx.foodCount]    total edible items carried
  * @param {object} [cfg] overrides of autonomyDefaults()
  * @returns {Array<{kind, urgency, detail, advisory}>} sorted by urgency desc
  */
@@ -49,18 +54,41 @@ export function evaluateNeeds(ctx = {}, cfg = {}) {
         });
     }
 
-    // 2. Inventory nearly full — advisory until an unload executor exists.
+    // 2. Inventory nearly full -> unload into the nearest reachable chest.
     if (typeof ctx.freeSlots === 'number' && ctx.freeSlots <= c.free_slot_alert) {
         needs.push({
             kind: 'inventory_full',
             urgency: 0.8,
             detail: `${ctx.freeSlots} free slot(s)`,
-            advisory: true,
-            info: `Only ${ctx.freeSlots} inventory slot(s) left — unload soon.`
+            advisory: false,
+            info: `Only ${ctx.freeSlots} inventory slot(s) left — unloading to storage.`
         });
     }
 
-    // 3. Idle long enough with nothing pending -> go see the world.
+    // 3. Self-maintained reserves: torches and food, only when craftable now.
+    const counts = ctx.inventoryCounts ?? {};
+    const hasCoal = (counts['coal'] ?? 0) + (counts['charcoal'] ?? 0) >= 1;
+    if ((counts['torch'] ?? 0) < c.min_torches && hasCoal && (counts['stick'] ?? 0) >= 1) {
+        needs.push({
+            kind: 'restock_torches',
+            urgency: 0.35,
+            detail: 'torch',
+            advisory: false,
+            info: `Torches: ${counts['torch'] ?? 0}/${c.min_torches}; coal + sticks available.`
+        });
+    }
+    const foodCount = ctx.foodCount ?? 0;
+    if (foodCount < c.min_food && (counts['wheat'] ?? 0) >= 3) {
+        needs.push({
+            kind: 'restock_food',
+            urgency: 0.4,
+            detail: 'bread',
+            advisory: false,
+            info: `Food: ${foodCount}/${c.min_food}; wheat available for bread.`
+        });
+    }
+
+    // 4. Idle long enough with nothing pending -> go see the world.
     if (c.explore_when_idle) {
         const idleMs = ctx.idleForMs ?? 0;
         if (idleMs >= c.explore_idle_s * 1000 && !ctx.hasPendingResume) {

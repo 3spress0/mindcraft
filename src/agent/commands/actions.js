@@ -9,6 +9,7 @@ import { saveAreaAsLitematic, saveAreaAsSchem } from '../schematics/capture.js';
 import { setHome, getHome } from '../navigation/home.js';
 import { explore } from '../navigation/exploration.js';
 import { replaceTool } from '../library/durability.js';
+import { RISK_PRESETS } from '../humanlike/personality.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -691,6 +692,22 @@ export const actionsList = [
             const on = String(state).toLowerCase() === 'on';
             agent.autonomy.setRuntimeEnabled(on);
             return `Autonomy loop ${on ? 'enabled' : 'disabled'}.`;
+        }
+    },
+    {
+        name: '!setRisk',
+        description: 'Set the bot\'s risk posture: cautious (hazard-aware "safe" pathing, no idle exploration), balanced (default pathing, explores when idle), or bold (fast pathing that may dig, explores when idle).',
+        params: {
+            'posture': { type: 'string', description: 'One of: cautious, balanced, bold.' },
+        },
+        perform: async function (agent, posture) {
+            const preset = RISK_PRESETS[String(posture).toLowerCase()];
+            if (!preset) return `Unknown risk posture "${posture}". Options: ${Object.keys(RISK_PRESETS).join(', ')}.`;
+            try { setProfileName(agent.bot, preset.path_profile); }
+            catch (e) { return `Could not apply path profile: ${e.message}`; }
+            agent.autonomy?.setExploreEnabled(preset.explore_when_idle);
+            agent.bot._risk_profile = String(posture).toLowerCase();
+            return `Risk posture set to ${posture.toLowerCase()}: ${preset.description}.`;
         }
     },
     {

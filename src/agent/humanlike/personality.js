@@ -22,7 +22,19 @@ export const PRESETS = {
     cautious: { caution: 0.8, pace: 1.2, precision: 0.85, restlessness: 0.1 },
     energetic: { pace: 0.7, restlessness: 0.6, curiosity: 0.7 },
     laidback: { pace: 1.25, restlessness: 0.15, caution: 0.3, curiosity: 0.35 },
-    social: { sociability: 0.9, curiosity: 0.65 }
+    social: { sociability: 0.9, curiosity: 0.65 },
+    // social/risk-flavored profiles
+    guardian: { caution: 0.85, sociability: 0.45, restlessness: 0.1, precision: 0.9, pace: 1.1 },
+    greeter: { sociability: 0.95, curiosity: 0.75, restlessness: 0.3, pace: 0.9 },
+    scout: { curiosity: 0.9, restlessness: 0.75, pace: 0.75, caution: 0.25 },
+    worker: { precision: 0.9, caution: 0.6, sociability: 0.25, restlessness: 0.1, pace: 1.05 }
+};
+
+/** Risk posture presets: path profile + exploration appetite. */
+export const RISK_PRESETS = {
+    cautious: { path_profile: 'safe', explore_when_idle: false, description: 'hazard-aware paths, stays put when idle' },
+    balanced: { path_profile: 'default', explore_when_idle: true, description: 'default paths, explores while idle' },
+    bold: { path_profile: 'fast', explore_when_idle: true, description: 'fast paths (may dig), explores while idle' }
 };
 
 function clampTo(key, value) {

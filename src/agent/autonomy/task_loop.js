@@ -18,6 +18,8 @@ import settings from '../../../settings.js';
 import { evaluateNeeds, countFreeSlots, isNightTime } from './needs.js';
 import { EXECUTORS } from './executors.js';
 import { listTools } from '../library/durability.js';
+import { isEdible } from './unload.js';
+import * as world from '../library/world.js';
 import convoManager from '../conversation.js';
 
 export function getAutonomyConfig() {
@@ -27,7 +29,10 @@ export function getAutonomyConfig() {
         explore_when_idle: block.needs?.explore_when_idle ?? true,
         explore_idle_s: block.needs?.explore_idle_s ?? 60,
         explore_legs: block.needs?.explore_legs ?? 2,
-        free_slot_alert: block.needs?.free_slot_alert ?? 2
+        free_slot_alert: block.needs?.free_slot_alert ?? 2,
+        min_torches: block.needs?.min_torches ?? 8,
+        min_food: block.needs?.min_food ?? 5,
+        max_unload_types: block.needs?.max_unload_types ?? 8
     };
     const [lo, hi] = Array.isArray(block.cooldown_s) && block.cooldown_s.length === 2
         ? block.cooldown_s : [20, 60];
@@ -46,12 +51,22 @@ export function snapshotNeeds(agent, cfg) {
     const threshold = cfg.needs.tool_replace_threshold;
     let tools = [];
     try { tools = listTools(bot, threshold); } catch { tools = []; }
+    let inventoryCounts = {};
+    try { inventoryCounts = world.getInventoryCounts(bot); } catch { inventoryCounts = {}; }
+    let foodCount = 0;
+    try {
+        for (const item of bot?.inventory?.slots ?? []) {
+            if (item && isEdible(bot, item)) foodCount += item.count ?? 1;
+        }
+    } catch { foodCount = 0; }
     return {
         tools,
         freeSlots: countFreeSlots(bot),
         idleForMs: typeof agent?.idleForMs === 'function' ? agent.idleForMs() : 0,
         isNight: isNightTime(bot),
-        hasPendingResume: !!agent?.behavior_state?.hasPendingResume?.()
+        hasPendingResume: !!agent?.behavior_state?.hasPendingResume?.(),
+        inventoryCounts,
+        foodCount
     };
 }
 
@@ -66,6 +81,7 @@ export class AutonomyLoop {
         this._rng = rng; // optional seeded rng for cooldown pacing
         this._executors = executors;
         this._runtimeEnabled = null; // !setAutonomy override; null = follow settings
+        this._exploreOverride = null; // !setRisk override; null = follow settings
         this._running = false;
         this._nextRunAt = 0;
         this.lastRun = null; // { t, kind, detail, result }
@@ -78,6 +94,9 @@ export class AutonomyLoop {
     }
 
     setRuntimeEnabled(on) { this._runtimeEnabled = !!on; }
+
+    /** Risk-posture hook: force exploration on/off regardless of settings. */
+    setExploreEnabled(on) { this._exploreOverride = on == null ? null : !!on; }
 
     /** Personality-paced cooldown in ms within the configured envelope. */
     _cooldownMs(cfg) {
@@ -114,6 +133,7 @@ export class AutonomyLoop {
             if (this._blocked()) return;
 
             const cfg = getAutonomyConfig();
+            if (this._exploreOverride != null) cfg.needs.explore_when_idle = this._exploreOverride;
             const ctx = snapshotNeeds(this.agent, cfg);
             const needs = evaluateNeeds(ctx, cfg.needs);
             const actionable = needs.find(n => !n.advisory && this._executors[n.kind]);

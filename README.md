@@ -591,11 +591,13 @@ the "larger autonomous behavior" stage of the progression. It complements
 ```text
 !autonomyStatus        # on/off, cooldown, last run, current needs, history
 !setAutonomy off       # pause the loop; "on" resumes it
+!setRisk cautious      # risk posture: cautious | balanced | bold
 ```
 
 Configuration lives under `settings.autonomy` (`enabled`, `cooldown_s`,
 `action_timeout_s`, and per-need thresholds like `tool_replace_threshold`,
-`explore_when_idle`, `explore_idle_s`).
+`explore_when_idle`, `explore_idle_s`, `min_torches`, `min_food`,
+`max_unload_types`).
 
 # Social Memory & Reactions
 
@@ -621,6 +623,36 @@ only on entities the server actually reports.
 ```
 
 Reactions can be disabled entirely with `settings.social.greetings: false`.
+
+# Storage Management, Reserves & Risk Postures
+
+The autonomy loop (`src/agent/autonomy/`) now keeps the bot's material life in
+order and lets you dial its risk appetite — all using only information the
+server already provides.
+
+* **Autonomous storage management** — when free slots run low, the loop finds
+  the nearest chest within 32 blocks and deposits bulk non-essentials (sorted
+  by volume), always keeping tools, armor, food, and working items like
+  buckets and flint & steel. Deposits go through the normal `putInChest`
+  skill so the storage index stays accurate.
+* **Self-maintained reserves** — two new needs top up consumables when
+  materials allow: torches (`min_torches`, default 8, crafted from
+  coal/charcoal + sticks) and food (`min_food`, default 5, bread from wheat).
+  Nothing is crafted unless the recipe materials are already in hand.
+* **Risk postures** — `!setRisk cautious|balanced|bold` applies a preset from
+  `humanlike/personality.js`: cautious uses the hazard-aware `safe` path
+  profile and skips idle exploration, balanced uses default paths and
+  explores when idle, bold uses fast paths (which may dig) and explores. The
+  posture is stored on the bot and reported by `!baritoneStatus` context.
+
+```text
+!setRisk cautious   # slow and careful
+!setRisk balanced   # default
+!setRisk bold       # fast, exploratory, may dig
+```
+
+Four new social-flavored personality presets are also available via
+`settings.personality.preset`: `guardian`, `greeter`, `scout`, and `worker`.
 
 # Legit Awareness (Radar)
 
@@ -748,7 +780,7 @@ Configuration lives under `settings.humanlike`:
     "enabled": true,
     "seed": null,                  // fixed seed for reproducibility (else bot-name hash)
     "personality": {
-        "preset": "default",      // default|curious|cautious|energetic|laidback|social
+        "preset": "default",      // default|curious|cautious|energetic|laidback|social|guardian|greeter|scout|worker
         "overrides": {}            // e.g. { "curiosity": 0.9 }
     },
     "interaction": {

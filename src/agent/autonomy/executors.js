@@ -8,6 +8,7 @@
 import * as durability from '../library/durability.js';
 import { explore } from '../navigation/exploration.js';
 import { autonomyDefaults } from './needs.js';
+import { executeInventoryUnload } from './unload.js';
 
 /** Replace the worn/broken tool named in the need. */
 export async function executeToolReplacement(agent, need, cfg = {}) {
@@ -34,8 +35,26 @@ export async function executeExploration(agent, need, cfg = {}) {
     }
 }
 
+/** Craft reserve items (torches / bread) to top up self-maintained stocks. */
+export async function executeRestock(agent, need, cfg = {}) {
+    const itemName = need?.detail;
+    if (!itemName) return 'restock: nothing specified';
+    try {
+        const skills = await import('../library/skills.js');
+        const num = itemName === 'torch' ? Math.max(1, Math.min(16, cfg.min_torches ?? 8)) : 3;
+        const ok = await skills.craftRecipe(agent.bot, itemName, num);
+        return ok
+            ? `restock: crafted ${num}x ${itemName}`
+            : `restock: could not craft ${itemName} (materials or table missing)`;
+    } catch (e) {
+        return `restock failed: ${e.message}`;
+    }
+}
+
 export const EXECUTORS = {
     tool_replace: executeToolReplacement,
-    explore: executeExploration
-    // inventory_full is advisory only until an unload executor exists
+    explore: executeExploration,
+    inventory_full: executeInventoryUnload,
+    restock_torches: executeRestock,
+    restock_food: executeRestock
 };

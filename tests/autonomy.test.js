@@ -30,11 +30,11 @@ describe('autonomy needs evaluation', () => {
         assert.ok(needs.some(n => n.kind === 'explore'));
     });
 
-    it('inventory_full is advisory', () => {
+    it('inventory_full is actionable (unload executor exists)', () => {
         const needs = evaluateNeeds({ tools: [], freeSlots: 1, idleForMs: 0 }, {});
         const inv = needs.find(n => n.kind === 'inventory_full');
         assert.ok(inv);
-        assert.equal(inv.advisory, true);
+        assert.equal(inv.advisory, false);
     });
 
     it('explore needs idle time and no pending resume', () => {
@@ -154,10 +154,10 @@ describe('autonomy task loop', () => {
         assert.equal(agent.ran.length, 0);
     });
 
-    it('advisory-only needs schedule cooldown without running', async () => {
+    it('needs without executors schedule cooldown without running', async () => {
         const agent = fakeAgent({ idleForMs: () => 0 });
-        agent.bot.inventory.slots = agent.bot.inventory.slots.fill({}); // zero free slots
-        const loop = loopFor(agent, { t: 0 });
+        agent.bot.inventory.slots = agent.bot.inventory.slots.fill({}); // zero free slots -> inventory_full
+        const loop = loopFor(agent, { t: 0 }); // stub executors lack inventory_full
         await loop.tick();
         assert.equal(agent.ran.length, 0);
         assert.equal(loop.history.length, 0);
@@ -233,10 +233,12 @@ describe('real executors', () => {
         assert.match(msg, /no tool specified/);
     });
 
-    it('EXECUTORS map covers executable needs only', () => {
+    it('EXECUTORS map covers all actionable needs', () => {
         assert.ok(EXECUTORS.tool_replace);
         assert.ok(EXECUTORS.explore);
-        assert.equal(EXECUTORS.inventory_full, undefined);
+        assert.ok(EXECUTORS.inventory_full);
+        assert.ok(EXECUTORS.restock_torches);
+        assert.ok(EXECUTORS.restock_food);
     });
 
     it('snapshotNeeds handles missing bot pieces', () => {

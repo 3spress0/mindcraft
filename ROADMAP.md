@@ -89,10 +89,10 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Uncertainty in remembered information — fact confidence
 * [x] Behavioral personality configuration — `humanlike/personality.js`: seeded trait vectors (pace/curiosity/caution/restlessness/sociability/precision), presets, overrides
 * [x] Different behavior profiles — agent profiles + movement profiles + personality presets
-* [ ] Conservative/aggressive exploration preferences
-* [~] Social behavior profiles — sociability/curiosity traits shape greeting chance and cadence; no dedicated social presets yet
+* [~] Conservative/aggressive exploration preferences — `!setRisk` toggles idle exploration on/off; no per-biome gradations yet
+* [x] Social behavior profiles — sociability/curiosity traits + dedicated presets: `guardian`, `greeter`, `scout`, `worker`
 * [x] Configurable idle behavior — `humanlike.idle` settings drive the `idle_behavior` mode
-* [ ] Configurable risk tolerance
+* [x] Configurable risk tolerance — `!setRisk cautious|balanced|bold` maps to path profile + exploration appetite
 * [x] Non-deterministic but reproducible behavior seeds — personality seeded from bot name / `humanlike.seed`; all randomness in `humanlike/rng.js` with reproducible tests
 
 ### Perception
@@ -292,8 +292,8 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Withdraw logic — `!takeFromChest`
 * [ ] Sorting
 * [ ] Stack management
-* [ ] Storage optimization
-* [ ] Overflow handling
+* [~] Storage optimization — autonomy loop deposits bulk non-essentials into the nearest chest
+* [~] Overflow handling — `inventory_full` need auto-unloads before slot starvation; no multi-chest routing yet
 * [ ] Named storage locations
 * [ ] Storage-aware planning
 
@@ -470,7 +470,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Storage benchmark
 * [ ] Survival benchmark
 * [x] Multi-step task benchmark — scenario suite
-* [ ] Humanlike-behavior benchmark
+* [x] Humanlike-behavior benchmark — `tests/humanlike_benchmark.test.js`: 8 deterministic scenarios (interrupt-resume, route staleness, frontier coverage, need prioritization, reaction spam resistance, delay envelopes, idle stability, glance bounds)
 * [x] Efficiency metrics
 * [x] Completion metrics
 * [ ] Death metrics
@@ -485,8 +485,8 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 
 * [x] Behavior profiles — agent profiles
 * [x] Movement profiles — baritone profiles
-* [ ] Risk profiles
-* [~] Social profiles — personality sociability trait drives reactions; preset profiles pending
+* [x] Risk profiles — `!setRisk` applies `RISK_PRESETS` (path profile + exploration flag)
+* [x] Social profiles — personality sociability drives reactions; presets `guardian`/`greeter`/`scout`/`worker`
 * [ ] Exploration profiles
 * [ ] Building profiles
 * [ ] Resource priorities
@@ -551,17 +551,17 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Autonomous crafting — npc item_goal chains
 * [x] Autonomous building — npc build_goal
 * [ ] Autonomous farming
-* [ ] Autonomous storage management
+* [x] Autonomous storage management — `autonomy/unload.js`: keeps tools/armor/food/working items, deposits bulk resources to the nearest chest via `putInChest`
 * [ ] Autonomous base maintenance
 * [x] Autonomous recovery
 * [x] Autonomous task selection — self-prompter + npc goals + needs-driven autonomy loop
-* [x] Autonomous task loop — `src/agent/autonomy/`: idle needs scoring (tool replacement, exploration), personality-paced cooldown, bounded history, `!autonomyStatus` / `!setAutonomy`
+* [x] Autonomous task loop — `src/agent/autonomy/`: idle needs scoring (tool replacement, exploration, inventory unload, reserve restock), personality-paced cooldown, bounded history, `!autonomyStatus` / `!setAutonomy` / `!setRisk`
 * [x] Long-running goals — npc projects
 * [~] Multiple simultaneous objectives — modes concurrent; one action at a time
 * [x] Background maintenance tasks — autonomy loop replaces worn tools and explores while idle; modes handle survival
-* [ ] Self-maintained resource reserves
+* [x] Self-maintained resource reserves — autonomy loop crafts torches (`min_torches`) and bread (`min_food`) when materials allow
 * [x] Self-maintained equipment — autonomy loop auto-replaces broken/nearly-dead tools
-* [ ] Self-maintained food supply
+* [~] Self-maintained food supply — crafts bread from wheat on hand; no farming/foraging yet
 * [~] Self-maintained base — construction_damage repair; not proactive
 
 ### Final architecture target
@@ -632,8 +632,11 @@ idle), navigation intelligence has landed in `src/agent/navigation/`
 frontier exploration), and tool durability awareness + replacement planning
 is wired through mining in `src/agent/library/durability.js`, and the
 autonomous task loop now runs in `src/agent/autonomy/` (idle needs scoring,
-auto tool replacement, frontier exploration, bounded history), and social
-memory + reactions live in `src/agent/social/` (persistent player ledger,
-approach/departure greetings, trust commands). Remaining frontier: dedicated
-social/risk profiles, autonomous storage/farming management, and
-self-maintained reserves.
+auto tool replacement, frontier exploration, inventory unload, torch/food
+reserve restock, bounded history), social memory + reactions live in
+`src/agent/social/` (persistent player ledger, approach/departure greetings,
+trust commands), social/risk presets + `!setRisk` posture control are in
+`src/agent/humanlike/personality.js`, and the humanlike-behavior benchmark
+guards all of it deterministically in `tests/humanlike_benchmark.test.js`.
+Remaining frontier: farming/foraging pipelines, multi-chest storage routing,
+risk-aware planning, and end-to-end survival benchmarks.
