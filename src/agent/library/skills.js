@@ -985,6 +985,10 @@ export async function putInChest(bot, itemName, num=-1) {
     const chestContainer = await bot.openContainer(chest);
     await chestContainer.deposit(item.type, null, to_put);
     await chestContainer.close();
+    try {
+        bot._storage_index?.adjust(chest.position, itemName, to_put, { type: chest.name });
+        bot._storage_index?.persist();
+    } catch (e) { void e; }
     log(bot, `Successfully put ${to_put} ${itemName} in the chest.`);
     return true;
 }
@@ -1031,6 +1035,12 @@ export async function takeFromChest(bot, itemName, num=-1) {
     }
     
     await chestContainer.close();
+    try {
+        if (totalTaken > 0) {
+            bot._storage_index?.adjust(chest.position, itemName, -totalTaken, { type: chest.name });
+            bot._storage_index?.persist();
+        }
+    } catch (e) { void e; }
     log(bot, `Successfully took ${totalTaken} ${itemName} from the chest.`);
     return totalTaken > 0;
 }
@@ -1051,6 +1061,11 @@ export async function viewChest(bot) {
     await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
     const chestContainer = await bot.openContainer(chest);
     let items = chestContainer.containerItems();
+    // Feed the legit storage index: we just saw this container's contents.
+    try {
+        bot._storage_index?.record(chest.name, chest.position, items.map(i => ({ name: i.name, count: i.count })));
+        bot._storage_index?.persist();
+    } catch (e) { void e; /* indexing must never break chest viewing */ }
     if (items.length === 0) {
         log(bot, `The chest is empty.`);
     }

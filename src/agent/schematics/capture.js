@@ -15,6 +15,7 @@ import path from 'path';
 import { Vec3 } from 'vec3';
 import { VOID, AIR_LIKE } from '../../utils/schematic.js';
 import { writeLitematicFile, describeModel } from '../../utils/litematic_writer.js';
+import { writeSpongeFile } from '../../utils/sponge_writer.js';
 import { library, userLibraryDir } from './library.js';
 
 // Safety caps so a mis-typed coordinate can't produce a gigabyte capture.
@@ -141,24 +142,31 @@ export function sanitizeCaptureName(name) {
 }
 
 /**
- * Capture a world box and save it as `<name>.litematic` in the user's build
- * library. Refuses to overwrite existing library entries.
+ * Capture a world box and save it into the user's build library.
+ * @param {string} format 'litematic' (default) or 'schem' (Sponge/WorldEdit)
  * @returns {Object} { file, name, width, height, length, totalBlocks, materials, unloaded }
  */
-export function saveAreaAsLitematic(bot, name, p1, p2, { author, description, minecraftDataVersion } = {}) {
+export function saveAreaAs(bot, name, p1, p2, { format = 'litematic', author, description, minecraftDataVersion } = {}) {
+    const fmt = String(format || 'litematic').toLowerCase().replace(/^\./, '');
+    if (fmt !== 'litematic' && fmt !== 'schem') {
+        throw new Error(`Unsupported capture format "${format}". Use "litematic" or "schem".`);
+    }
+    const ext = fmt === 'schem' ? '.schem' : '.litematic';
     const key = sanitizeCaptureName(name);
     const dir = userLibraryDir();
-    const file = path.join(dir, `${key}.litematic`);
+    const file = path.join(dir, `${key}${ext}`);
     if (fs.existsSync(file)) {
-        throw new Error(`A build named "${key}" already exists in the library; pick a different name.`);
+        throw new Error(`A build named "${key}${ext}" already exists in the library; pick a different name.`);
     }
 
     const model = captureArea(bot, p1, p2);
-    writeLitematicFile(model, file, {
+    const writer = fmt === 'schem' ? writeSpongeFile : writeLitematicFile;
+    writer(model, file, {
         name: key,
         author: author || bot.username || 'mindcraft',
         description: description || `Captured by ${bot.username || 'mindcraft'} at (${model.origin.x}, ${model.origin.y}, ${model.origin.z})`,
         minecraftDataVersion,
+        dataVersion: minecraftDataVersion,
     });
 
     // Make it immediately available to !listBuilds / !buildSchematic.
@@ -170,6 +178,7 @@ export function saveAreaAsLitematic(bot, name, p1, p2, { author, description, mi
     return {
         file,
         name: key,
+        format: fmt,
         width: summary.width,
         height: summary.height,
         length: summary.length,
@@ -178,4 +187,18 @@ export function saveAreaAsLitematic(bot, name, p1, p2, { author, description, mi
         skipped: summary.skipped,
         unloaded: model.capture.unloaded,
     };
+}
+
+/**
+ * Capture a world box and save it as `<name>.litematic` in the user's build
+ * library. Refuses to overwrite existing library entries.
+ * @returns {Object} { file, name, width, height, length, totalBlocks, materials, unloaded }
+ */
+export function saveAreaAsLitematic(bot, name, p1, p2, opts = {}) {
+    return saveAreaAs(bot, name, p1, p2, { ...opts, format: 'litematic' });
+}
+
+/** Capture a world box and save it as a Sponge/WorldEdit `<name>.schem`. */
+export function saveAreaAsSchem(bot, name, p1, p2, opts = {}) {
+    return saveAreaAs(bot, name, p1, p2, { ...opts, format: 'schem' });
 }

@@ -82,38 +82,96 @@ export function status(bot) {
     return `profile=${profile}, moving=${moving ? 'yes' : 'no'}, goal=${goalText}`;
 }
 
+const FACE_OFFSETS = [
+    [1, 0, 0], [-1, 0, 0],
+    [0, 1, 0], [0, -1, 0],
+    [0, 0, 1], [0, 0, -1],
+];
+
+function posKey(p) {
+    return `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`;
+}
+
+/**
+ * Vein-aware mining helper: breadth-first scan from a freshly mined block for
+ * face-connected blocks of the same type (ore veins, gravel pockets...).
+ * Returns up to `cap` blocks, not including the starting one.
+ */
+export function findVein(bot, startBlock, blockType, { cap = 32, seen = new Set() } = {}) {
+    const found = [];
+    const queue = [startBlock.position];
+    seen.add(posKey(startBlock.position));
+    while (queue.length > 0 && found.length < cap) {
+        const pos = queue.shift();
+        for (const [dx, dy, dz] of FACE_OFFSETS) {
+            if (found.length >= cap) break;
+            const next = { x: pos.x + dx, y: pos.y + dy, z: pos.z + dz };
+            const key = posKey(next);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            let block = null;
+            try {
+                block = bot.blockAt(next, false);
+            } catch {
+                block = null;
+            }
+            if (!block || block.name !== blockType) continue;
+            found.push(block);
+            queue.push(next);
+        }
+    }
+    return found;
+}
+
 /**
  * Baritone-style #mine: repeatedly find the nearest matching block, path to
- * an adjacent spot and dig it with the best available tool.
+ * an adjacent spot and dig it with the best available tool. Vein-aware: after
+ * each dig, face-connected blocks of the same type are mined first before the
+ * next nearest-search (like Baritone's vein mining), unless `vein: false`.
  *
  * @param {Object} bot        mineflayer bot
  * @param {string} blockType  block name, e.g. 'iron_ore'
  * @param {number} count      how many blocks to mine
- * @param {Object} opts       { range, profile, onProgress }
+ * @param {Object} opts       { range, profile, onProgress, vein, veinCap }
  * @returns {Object} { mined, requested, reason }
  */
 export async function mineBlocks(bot, blockType, count = 1, opts = {}) {
     const range = Math.max(16, Math.min(256, opts.range || 64));
+    const veinEnabled = opts.vein !== false;
+    const veinSeen = new Set();
+    const veinQueue = [];
     let mined = 0;
     let reason = 'completed';
 
-    for (let i = 0; i < count; i++) {
+    while (mined < count) {
         if (bot.interrupt_code) {
             reason = 'interrupted';
             break;
         }
-        const block = world.getNearestBlock(bot, blockType, range);
-        if (!block) {
-            reason = mined > 0 ? `no more ${blockType} within ${range} blocks` : `no ${blockType} found within ${range} blocks`;
-            break;
+
+        // Vein leftovers first, then the next nearest occurrence.
+        let target = veinQueue.shift() || null;
+        if (!target) {
+            target = world.getNearestBlock(bot, blockType, range);
+            if (!target) {
+                reason = mined > 0
+                    ? `no more ${blockType} within ${range} blocks`
+                    : `no ${blockType} found within ${range} blocks`;
+                break;
+            }
         }
 
-        const goal = new goals.GoalGetToBlock(block.position.x, block.position.y, block.position.z);
-        try {
-            await gotoGoal(bot, goal, { profile: opts.profile });
-        } catch (err) {
-            reason = `could not reach ${blockType}: ${err.message}`;
-            break;
+        // Only re-path when the block is out of interaction reach.
+        const here = bot.entity?.position;
+        const farAway = !here || here.distanceTo(target.position) > 4;
+        if (farAway) {
+            const goal = new goals.GoalGetToBlock(target.position.x, target.position.y, target.position.z);
+            try {
+                await gotoGoal(bot, goal, { profile: opts.profile });
+            } catch (err) {
+                reason = `could not reach ${blockType}: ${err.message}`;
+                break;
+            }
         }
         if (bot.interrupt_code) {
             reason = 'interrupted';
@@ -121,9 +179,9 @@ export async function mineBlocks(bot, blockType, count = 1, opts = {}) {
         }
 
         // The block may have been taken by someone/something while walking.
-        const current = bot.blockAt(block.position);
+        const current = bot.blockAt(target.position);
         if (!current || current.name !== blockType) {
-            continue; // recount without digging air
+            continue; // skip stale targets without digging air
         }
 
         // Equip the best harvest tool, mirroring Baritone's tool selection.
@@ -139,6 +197,12 @@ export async function mineBlocks(bot, blockType, count = 1, opts = {}) {
         } catch (err) {
             reason = `failed to dig ${blockType}: ${err.message}`;
             break;
+        }
+
+        if (veinEnabled && mined < count) {
+            for (const member of findVein(bot, current, blockType, { cap: opts.veinCap || 32, seen: veinSeen })) {
+                veinQueue.push(member);
+            }
         }
     }
 

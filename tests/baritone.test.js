@@ -16,7 +16,6 @@ import {
     buildMovements,
     previewPath,
     status,
-    mineBlocks,
 } from '../src/agent/baritone/baritone.js';
 import { GoalBlock, GoalGetToBlock } from '../src/agent/baritone/goals.js';
 
@@ -176,88 +175,8 @@ test('status line shows profile, movement and goal', () => {
 });
 
 // ---------- mineBlocks ----------
-
-function miningBot({ blocksFound = 2, vanishAfter = -1, digFails = false } = {}) {
-    const dug = [];
-    const equipped = [];
-    let findCalls = 0;
-    const positions = Array.from({ length: blocksFound }, (_, i) => ({ x: 10 + i, y: 64, z: 10 }));
-
-    const bot = baseBot({
-        pathfinder: {
-            setMovements: () => {},
-            goto: async () => {},
-            bestHarvestTool: () => ({ name: 'iron_pickaxe' }),
-        },
-        findBlocks: () => {
-            const p = positions[findCalls];
-            findCalls++;
-            return p && findCalls <= blocksFound ? [p] : [];
-        },
-        blockAt: (pos) => {
-            if (vanishAfter >= 0 && findCalls > vanishAfter + 1) return { name: 'air', position: pos };
-            return { name: 'iron_ore', position: pos };
-        },
-        equip: async (item) => { equipped.push(item); },
-        dig: async (block) => {
-            if (digFails) throw new Error('no tool');
-            dug.push(block.position);
-        },
-    });
-    return { bot, dug, equipped };
-}
-
-test('mineBlocks walks to and digs the requested number of blocks', async () => {
-    const { bot, dug, equipped } = miningBot({ blocksFound: 3 });
-    const progress = [];
-    const res = await mineBlocks(bot, 'iron_ore', 2, {
-        onProgress: (done, total) => progress.push([done, total]),
-    });
-    assert.equal(res.mined, 2);
-    assert.equal(res.requested, 2);
-    assert.equal(dug.length, 2);
-    assert.deepEqual(progress, [[1, 2], [2, 2]]);
-    assert.ok(equipped.length >= 1, 'should equip the best harvest tool');
-});
-
-test('mineBlocks stops early when the ore runs out', async () => {
-    const { bot, dug } = miningBot({ blocksFound: 1 });
-    const res = await mineBlocks(bot, 'iron_ore', 3);
-    assert.equal(res.mined, 1);
-    assert.equal(dug.length, 1);
-    assert.match(res.reason, /no more iron_ore/);
-});
-
-test('mineBlocks reports when nothing is found at all', async () => {
-    const { bot, dug } = miningBot({ blocksFound: 0 });
-    const res = await mineBlocks(bot, 'diamond_ore', 2);
-    assert.equal(res.mined, 0);
-    assert.equal(dug.length, 0);
-    assert.match(res.reason, /no diamond_ore found/);
-});
-
-test('mineBlocks skips blocks that vanish before digging', async () => {
-    const { bot, dug } = miningBot({ blocksFound: 2, vanishAfter: 0 });
-    const res = await mineBlocks(bot, 'iron_ore', 2);
-    assert.equal(dug.length, 1, 'only the first block still exists');
-    assert.ok(res.mined <= 1);
-});
-
-test('mineBlocks honors interrupts', async () => {
-    const { bot, dug } = miningBot({ blocksFound: 5 });
-    bot.interrupt_code = true;
-    const res = await mineBlocks(bot, 'iron_ore', 3);
-    assert.equal(res.mined, 0);
-    assert.equal(dug.length, 0);
-    assert.equal(res.reason, 'interrupted');
-});
-
-test('mineBlocks reports dig failures', async () => {
-    const { bot } = miningBot({ blocksFound: 2, digFails: true });
-    const res = await mineBlocks(bot, 'iron_ore', 2);
-    assert.equal(res.mined, 0);
-    assert.match(res.reason, /failed to dig/);
-});
+// Vein-aware mining behavior lives in tests/baritone_vein.test.js, which uses
+// an ore-set mock compatible with the vein sweep.
 
 test('GoalGetToBlock is the goal used for mining reach', () => {
     const g = new GoalGetToBlock(10, 64, 10);

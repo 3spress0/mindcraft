@@ -456,9 +456,12 @@ Schematics are no longer read-only. `!saveArea` captures any box of the live
 world — block-state properties included — and serializes it to a real,
 gzip-compressed `.litematic` file with a proper block-state palette and packed
 bit arrays (entries may straddle 64-bit long boundaries exactly like the
-Litematica mod expects). Captured builds land in the build library, so the bot
-can round-trip them: capture a structure, quote its materials, and rebuild it
-elsewhere — or hand the file to a human using the Litematica mod.
+Litematica mod expects). `!saveAreaSchem` writes the same capture as a
+Sponge/WorldEdit `.schem` (spec v2: block-state string palette + LEB128 varint
+block data), the format WorldEdit saves and Baritone builds natively. Captured
+builds land in the build library, so the bot can round-trip them: capture a
+structure, quote its materials, and rebuild it elsewhere — or hand the file to
+a human using the Litematica mod or WorldEdit.
 
 # Baritone-style Movement
 
@@ -478,7 +481,10 @@ depending on Baritone itself, which would need a separate Java process).
 * **Path preview** — dry-run a path without moving and report whether it exists
   and how long it is, like Baritone's `#calc`.
 * **Mining** — `#mine`-style behavior: locate the nearest matching block, path
-  to an adjacent spot, equip the best tool, and dig.
+  to an adjacent spot, equip the best tool, and dig. It is **vein-aware**: after
+  each dig, face-connected blocks of the same type (ore veins, gravel pockets)
+  are swept out before the next nearest-search, mirroring Baritone's vein
+  mining. Disable per call with `{ vein: false }`.
 
 ```text
 !setPathProfile legit
@@ -511,6 +517,39 @@ not just that they exist, and is exposed as a command:
 
 This is observational awareness only. It does not send packets the bot isn't
 supposed to send and is not a mechanism for bypassing anti-cheat.
+
+# Storage Awareness
+
+The bot keeps an **item-location database**: every container it opens or scans
+is remembered by position with what was last seen inside. Viewing, depositing
+and withdrawing (`!viewChest` / `!putInChest` / `!takeFromChest`) all feed the
+index, and the radar's storage scan seeds positions of unopened containers. The
+index is capped, pruned by age, and persisted per-bot to
+`bots/<name>/storage_index.json`.
+
+```text
+!storage
+!findItem iron_ingot
+```
+
+This is best-effort knowledge from the bot's own window interactions — never
+from packets it shouldn't have — so it answers "where is my iron?" with a
+position instead of re-scanning the world.
+
+# Home & Unified Status
+
+```text
+!sethome
+!home
+!status
+!memory
+```
+
+`!sethome` marks the current position as a persistent home waypoint (stored in
+the world model and memory bank); `!home` walks back to it. `!status` gives one
+report combining the current action, position/health/hunger, the Baritone
+movement profile and goal, plan progress, and nearby players. `!memory`
+inspects saved places, the home waypoint, and a world-model summary.
 
 # Humanlike Locomotion
 

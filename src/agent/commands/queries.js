@@ -5,10 +5,12 @@ import convoManager from '../conversation.js';
 import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks.js';
 import { library, formatMaterialCounts } from '../schematics/library.js';
 import { load } from 'cheerio';
-import { radarReport } from '../sensors/radar.js';
-import { previewPath } from '../baritone/baritone.js';
+import * as radarModule from '../sensors/radar.js';
+import { previewPath, status as baritoneStatus } from '../baritone/baritone.js';
 import { GoalBlock } from '../baritone/goals.js';
 import { profileDocs, getProfileName } from '../baritone/settings.js';
+import { getStorageIndex, saveStorageIndex } from '../storage/index.js';
+import { getHome } from '../navigation/home.js';
 
 const pad = (str) => {
     return '\n' + str + '\n';
@@ -221,7 +223,7 @@ export const queryList = [
         name: "!radar",
         description: "Radar sweep: exact positions, distances and compass bearings of nearby players, mobs, dropped items and storage containers. Use this to know WHERE everyone and everything is.",
         perform: function (agent) {
-            return pad(radarReport(agent.bot));
+            return pad(radarModule.radarReport(agent.bot));
         }
     },
     {
@@ -246,6 +248,98 @@ export const queryList = [
         description: "List the Baritone-style movement profiles (default, legit, fast, builder) and which one is active. Change it with !setPathProfile.",
         perform: function (agent) {
             return pad('Movement profiles:\n' + profileDocs(getProfileName(agent.bot)));
+        }
+    },
+    {
+        name: "!storage",
+        description: "Show the storage index: every container the bot has opened or scanned, where it is, and what was last seen inside.",
+        perform: function (agent) {
+            const index = getStorageIndex(agent);
+            // Seed positions of unopened containers from the legit radar scan.
+            try {
+                const { storageScan } = radarModule;
+                const scan = storageScan(agent.bot, 24);
+                for (const c of scan.positions) index.notePosition(c.type, { x: c.x, y: c.y, z: c.z });
+            } catch { /* scan is an optional enrichment */ }
+            saveStorageIndex(agent);
+            return pad(index.render());
+        }
+    },
+    {
+        name: "!findItem",
+        description: "Look up where an item is believed to be stored: searches the container index and reports every container holding it with counts and positions.",
+        params: {
+            'item_name': { type: 'string', description: 'The item to locate, e.g. iron_ingot.' },
+        },
+        perform: function (agent, item_name) {
+            const index = getStorageIndex(agent);
+            const hits = index.findItem(item_name);
+            if (hits.length === 0) {
+                return pad(`No indexed container is known to hold ${item_name}. Open or view chests (!viewChest) to build the index, or check the inventory with !inventory.`);
+            }
+            const lines = [`${item_name} found in ${hits.length} container(s):`];
+            for (const h of hits) {
+                lines.push(`- ${h.type} at (${h.x}, ${h.y}, ${h.z}): x${h.count}`);
+            }
+            return pad(lines.join('\n'));
+        }
+    },
+    {
+        name: "!memory",
+        description: "Inspect the bot's memory: saved places, the home waypoint, and a summary of the persistent world model.",
+        perform: function (agent) {
+            const lines = ['MEMORY'];
+            const keys = agent.memory_bank?.getKeys?.() || '';
+            lines.push(keys ? `Saved places: ${keys}` : 'Saved places: none');
+            const home = getHome(agent);
+            lines.push(home
+                ? `Home: (${home.x}, ${home.y}, ${home.z})`
+                : 'Home: not set (use !sethome)');
+            try {
+                if (agent.world_model?.render) {
+                    lines.push('', agent.world_model.render().split('\n').slice(0, 12).join('\n'));
+                }
+            } catch { /* world model optional */ }
+            return pad(lines.join('\n'));
+        }
+    },
+    {
+        name: "!status",
+        description: "Unified status: current action, health/hunger/position, movement profile and goal, plan progress, and nearby players in one report.",
+        perform: function (agent) {
+            const bot = agent.bot;
+            const lines = ['STATUS'];
+
+            // Self
+            const pos = bot.entity?.position;
+            const action = agent.isIdle?.() ? 'Idle' : (agent.actions?.currentActionLabel || 'Acting');
+            lines.push(`Action: ${action}`);
+            if (pos) lines.push(`Position: (${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)})`);
+            lines.push(`Health: ${Math.round(bot.health ?? 0)}/20, Hunger: ${Math.round(bot.food ?? 0)}/20`);
+
+            // Navigation (Baritone layer)
+            try {
+                lines.push(`Navigation: ${baritoneStatus(bot)}`);
+            } catch { /* pathfinder not loaded */ }
+
+            // Plan
+            try {
+                if (agent.plan_runner?.statusText) {
+                    const plan = String(agent.plan_runner.statusText()).split('\n').filter(Boolean);
+                    lines.push(`Plan: ${plan[0] || 'none'}`);
+                }
+            } catch { /* no plan runner */ }
+
+            // Nearby players (radar)
+            try {
+                const { playerIntel } = radarModule;
+                const players = playerIntel(bot, 64);
+                lines.push(players.length
+                    ? `Nearby players: ${players.map(p => `${p.username} ${p.distance}m ${p.bearing}`).join(', ')}`
+                    : 'Nearby players: none in range');
+            } catch { /* radar optional */ }
+
+            return pad(lines.join('\n'));
         }
     },
     {

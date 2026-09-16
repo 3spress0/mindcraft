@@ -20,6 +20,7 @@ import { ReactMessageManager } from './react_message_manager.js';
 import convoManager from './conversation.js';
 import { addBrowserViewer } from './vision/browser_viewer.js';
 import { serverProxy, sendOutputToServer } from './mindserver_proxy.js';
+import { getStorageIndex } from './storage/index.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
@@ -187,6 +188,14 @@ export class Agent {
             } catch (err) {
                 console.warn('world-model setup failed:', err.message);
             }
+        }
+
+        // Storage index: remember where containers are and what they hold, so
+        // chest interactions and !findItem build persistent knowledge.
+        try {
+            getStorageIndex(this);
+        } catch (err) {
+            console.warn('storage-index setup failed:', err.message);
         }
 
         const ignore_messages = [

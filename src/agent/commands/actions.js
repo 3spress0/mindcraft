@@ -5,7 +5,8 @@ import { buildSchematic } from '../npc/schematic_build.js';
 import { Vec3 } from 'vec3';
 import { mineBlocks as baritoneMineBlocks, status as baritoneStatus } from '../baritone/baritone.js';
 import { setProfileName } from '../baritone/settings.js';
-import { saveAreaAsLitematic } from '../schematics/capture.js';
+import { saveAreaAsLitematic, saveAreaAsSchem } from '../schematics/capture.js';
+import { setHome, getHome } from '../navigation/home.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -360,6 +361,32 @@ export const actionsList = [
         }
     },
     {
+        name: '!saveAreaSchem',
+        description: 'Capture a box of the world (two opposite corners) and save it as a Sponge/WorldEdit .schem file in the build library — the format Baritone and WorldEdit use.',
+        params: {
+            'name': { type: 'string', description: 'Name for the saved build (no extension needed).' },
+            'x1': { type: 'float', description: 'X of the first corner.', domain: [-Infinity, Infinity] },
+            'y1': { type: 'float', description: 'Y of the first corner.', domain: [-64, 320] },
+            'z1': { type: 'float', description: 'Z of the first corner.', domain: [-Infinity, Infinity] },
+            'x2': { type: 'float', description: 'X of the opposite corner.', domain: [-Infinity, Infinity] },
+            'y2': { type: 'float', description: 'Y of the opposite corner.', domain: [-64, 320] },
+            'z2': { type: 'float', description: 'Z of the opposite corner.', domain: [-Infinity, Infinity] },
+        },
+        perform: async function (agent, name, x1, y1, z1, x2, y2, z2) {
+            try {
+                const res = saveAreaAsSchem(agent.bot, name, { x: x1, y: y1, z: z1 }, { x: x2, y: y2, z: z2 });
+                const top = Object.entries(res.materials)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 5)
+                    .map(([item, n]) => `${item} x${n}`)
+                    .join(', ');
+                return `Saved "${res.name}.schem" to the build library: ${res.width}x${res.height}x${res.length}, ${res.totalBlocks} blocks. Main materials: ${top}. It now shows up in !listBuilds.`;
+            } catch (e) {
+                return `Could not save the area: ${e.message}`;
+            }
+        }
+    },
+    {
         name: '!mineBlocks',
         description: 'Baritone-style #mine: find the nearest matching blocks, walk to each one and mine it with the best tool. Use for ores, logs, stone, etc.',
         params: {
@@ -625,6 +652,30 @@ export const actionsList = [
         params: {},
         perform: runAsAction(async (agent) => {
             await skills.goToSurface(agent.bot);
+        })
+    },
+    {
+        name: '!sethome',
+        description: 'Mark the current position as the bot\'s home waypoint (persisted in the world model and memory). Use !home to return there.',
+        params: {},
+        perform: async function (agent) {
+            const pos = setHome(agent);
+            if (!pos) return 'Could not determine the current position; home was not set.';
+            return `Home set to (${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)}). Use !home to go back.`;
+        }
+    },
+    {
+        name: '!home',
+        description: 'Travel back to the home waypoint set with !sethome.',
+        params: {},
+        perform: runAsAction(async (agent) => {
+            const pos = getHome(agent);
+            if (!pos) {
+                skills.log(agent.bot, 'No home is set yet. Use !sethome first.');
+                return;
+            }
+            await skills.goToPosition(agent.bot, pos.x, pos.y, pos.z, 2);
+            skills.log(agent.bot, `Arrived home at (${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)}).`);
         })
     },
     {
