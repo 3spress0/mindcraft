@@ -271,6 +271,14 @@ export const queryList = [
         }
     },
     {
+        name: "!social",
+        description: "Show social memory: every player the bot remembers with trust level (friend/neutral/hostile), sighting counts, and last distance. Use !trustPlayer / !distrustPlayer to update trust.",
+        perform: function (agent) {
+            if (!agent.player_ledger) return pad('Social memory not initialized.');
+            return pad(agent.player_ledger.summarize());
+        }
+    },
+    {
         name: "!previewPath",
         description: "Preview a path to the given coordinates WITHOUT moving (Baritone #calc): reports whether a path exists and how long it is under the current movement profile.",
         params: {

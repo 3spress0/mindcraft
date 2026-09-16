@@ -25,6 +25,8 @@ import { createPersonality } from './humanlike/personality.js';
 import { BehaviorStateMachine } from './humanlike/behavior_state.js';
 import { AttentionTracker } from './humanlike/attention.js';
 import { AutonomyLoop } from './autonomy/task_loop.js';
+import { PlayerLedger } from './social/player_ledger.js';
+import { ReactionGate, detectSocialEvents, reactionMessage } from './social/reactions.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
@@ -176,6 +178,19 @@ export class Agent {
         } catch (e) {
             console.error('Autonomy loop init failed:', e);
             this.autonomy = null;
+        }
+
+        // Social memory: persistent ledger of known players + reaction gating.
+        try {
+            this.player_ledger = new PlayerLedger({ botName: this.name || 'bot' }).load();
+            this.bot._player_ledger = this.player_ledger;
+            this._social_gate = new ReactionGate();
+            this._social_prev = {};
+            this._last_social_tick = 0;
+            this._last_ledger_save = 0;
+        } catch (e) {
+            console.error('Social layer init failed:', e);
+            this.player_ledger = null;
         }
 
         this.bot.on('login', () => {
@@ -913,7 +928,59 @@ export class Agent {
         this.observation_collector?.tick?.();
         // fire-and-forget: the loop is self-guarding (cooldown + _running flag)
         this.autonomy?.tick?.().catch(() => {});
+        this.tickSocial();
         await this.checkTaskDone();
+    }
+
+    /**
+     * Throttled social pass: record sightings in the persistent ledger,
+     * detect approach/departure/new-sighting events, and (rarely, bounded,
+     * respecting !stfu) whisper a contextual reaction. Advisory only — it
+     * never blocks the update loop.
+     */
+    tickSocial() {
+        try {
+            const now = Date.now();
+            if (now - (this._last_social_tick ?? 0) < 3000) return;
+            this._last_social_tick = now;
+            const bot = this.bot;
+            const self = bot?.entity?.position;
+            if (!self || !this.player_ledger) return;
+
+            const curr = {};
+            for (const [username, p] of Object.entries(bot.players ?? {})) {
+                if (!p?.entity?.position || username === this.name) continue;
+                const d = p.entity.position.distanceTo(self);
+                curr[username] = d;
+                this.player_ledger.sight(username, { dist: d });
+            }
+
+            const events = detectSocialEvents(this._social_prev ?? {}, curr);
+            this._social_prev = curr;
+
+            for (const ev of events) {
+                if (!this._social_gate?.allow(ev.kind, ev.name)) continue;
+                const entry = this.player_ledger.get(ev.name);
+                const msg = reactionMessage(ev, entry, { personality: this.personality });
+                if (msg && this.canSpeakSocial()) {
+                    try { bot.whisper(ev.name, msg); }
+                    catch { try { this.openChat(msg); } catch { void 0; } }
+                }
+            }
+
+            if (events.length && now - (this._last_ledger_save ?? 0) > 10000) {
+                this._last_ledger_save = now;
+                this.player_ledger.persist();
+            }
+        } catch { /* the social layer is advisory; never break the update loop */ }
+    }
+
+    /** Whether social reactions may speak right now. */
+    canSpeakSocial() {
+        if (this.shut_up) return false;
+        try { if (convoManager.inConversation()) return false; } catch { void 0; }
+        const cfg = settings.social ?? {};
+        return cfg.greetings !== false;
     }
 
     /**

@@ -694,6 +694,34 @@ export const actionsList = [
         }
     },
     {
+        name: '!trustPlayer',
+        description: 'Mark a player as a trusted friend in social memory. Friends get warm greetings and no hostility warnings.',
+        params: {
+            'player': { type: 'string', description: 'The player\'s username.' },
+            'note': { type: 'string', description: 'Optional note about why they are trusted.' },
+        },
+        perform: async function (agent, player, note) {
+            if (!agent.player_ledger) return 'Social memory not initialized.';
+            agent.player_ledger.markFriend(player, note || null);
+            agent.player_ledger.persist();
+            return `${player} is now marked as a friend.`;
+        }
+    },
+    {
+        name: '!distrustPlayer',
+        description: 'Mark a player as hostile in social memory. The bot will keep wary of them and warn them to keep distance.',
+        params: {
+            'player': { type: 'string', description: 'The player\'s username.' },
+            'note': { type: 'string', description: 'Optional note about why they are distrusted.' },
+        },
+        perform: async function (agent, player, note) {
+            if (!agent.player_ledger) return 'Social memory not initialized.';
+            agent.player_ledger.markHostile(player, note || null);
+            agent.player_ledger.persist();
+            return `${player} is now marked as hostile.`;
+        }
+    },
+    {
         name: '!replaceTool',
         description: 'Replace a worn or broken tool: equips the healthiest spare from the inventory, or crafts a fresh one if materials are available.',
         params: {

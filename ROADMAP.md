@@ -90,7 +90,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Behavioral personality configuration — `humanlike/personality.js`: seeded trait vectors (pace/curiosity/caution/restlessness/sociability/precision), presets, overrides
 * [x] Different behavior profiles — agent profiles + movement profiles + personality presets
 * [ ] Conservative/aggressive exploration preferences
-* [ ] Social behavior profiles
+* [~] Social behavior profiles — sociability/curiosity traits shape greeting chance and cadence; no dedicated social presets yet
 * [x] Configurable idle behavior — `humanlike.idle` settings drive the `idle_behavior` mode
 * [ ] Configurable risk tolerance
 * [x] Non-deterministic but reproducible behavior seeds — personality seeded from bot name / `humanlike.seed`; all randomness in `humanlike/rng.js` with reproducible tests
@@ -347,10 +347,10 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 ### Social behavior
 
 * [x] Player recognition
-* [ ] Friend/ally memory
-* [ ] Unknown-player classification
+* [x] Friend/ally memory — `social/player_ledger.js`: persistent trust levels, sightings, last distance (`bots/<name>/player_ledger.json`)
+* [x] Unknown-player classification — ledger classifies friend/neutral/hostile/unknown
 * [x] Nearby-player reaction — radar fed to context; modes respond
-* [ ] Greeting behavior
+* [x] Greeting behavior — bounded, personality-paced approach greetings (whispered; respects `!stfu` and conversations)
 * [x] Follow trusted players — followPlayer
 * [x] Stop following on request — `!stop`
 * [x] Player distance preferences — elbow_room mode
@@ -360,7 +360,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Context-aware chat
 * [x] Avoid speaking every tick — cooldowns + shutUp
 * [x] Idle chat suppression — `!stfu`
-* [ ] Reaction to player actions
+* [~] Reaction to player actions — approach/departure/new-sighting reactions shipped; reactions to builds/attacks not yet
 * [x] Shared-task behavior — multi-agent conversations
 * [x] Trading behavior — showVillagerTrades/tradeWithVillager
 * [x] Cooperation behavior — agent-to-agent chat + tasks
@@ -486,7 +486,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Behavior profiles — agent profiles
 * [x] Movement profiles — baritone profiles
 * [ ] Risk profiles
-* [ ] Social profiles
+* [~] Social profiles — personality sociability trait drives reactions; preset profiles pending
 * [ ] Exploration profiles
 * [ ] Building profiles
 * [ ] Resource priorities
@@ -632,6 +632,8 @@ idle), navigation intelligence has landed in `src/agent/navigation/`
 frontier exploration), and tool durability awareness + replacement planning
 is wired through mining in `src/agent/library/durability.js`, and the
 autonomous task loop now runs in `src/agent/autonomy/` (idle needs scoring,
-auto tool replacement, frontier exploration, bounded history). Remaining
-frontier: social behavior profiles, autonomous storage/farming management,
-and self-maintained reserves.
+auto tool replacement, frontier exploration, bounded history), and social
+memory + reactions live in `src/agent/social/` (persistent player ledger,
+approach/departure greetings, trust commands). Remaining frontier: dedicated
+social/risk profiles, autonomous storage/farming management, and
+self-maintained reserves.

@@ -167,6 +167,12 @@ const settings = {
         }
     },
 
+    // Social behavior (src/agent/social/): persistent player ledger plus
+    // bounded approach/departure reactions whispered to the other player.
+    "social": {
+        "greetings": true  // master switch for contextual social reactions
+    },
+
     // Autonomous task loop (src/agent/autonomy/). While the bot is idle it
     // periodically scores its needs and acts on the most urgent one through
     // the normal action manager, so everything stays interruptible.

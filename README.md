@@ -597,6 +597,31 @@ Configuration lives under `settings.autonomy` (`enabled`, `cooldown_s`,
 `action_timeout_s`, and per-need thresholds like `tool_replace_threshold`,
 `explore_when_idle`, `explore_idle_s`).
 
+# Social Memory & Reactions
+
+`src/agent/social/` gives the bot persistent people skills — all legit, built
+only on entities the server actually reports.
+
+* **Player ledger** — `bots/<name>/player_ledger.json` remembers every player
+  ever seen: trust level (`friend`/`neutral`/`hostile`), first/last seen
+  times, sighting counts, and last known distance. Bounded to 128 players,
+  atomic writes, corrupt-file tolerant.
+* **Reactions** — a throttled social pass detects players entering view,
+  approaching (≤12m), and departing (≥24m). Cooldown-gated and
+  personality-paced, the bot occasionally *whispers* a contextual reaction:
+  warm greetings scaled by sociability, wary notices for hostiles, the
+  occasional farewell. It never speaks over an active conversation and
+  respects `!stfu`.
+* **Trust commands** — teach the bot who to like:
+
+```text
+!social                          # everyone remembered, with trust + last distance
+!trustPlayer Steve helped build  # mark friend (note optional)
+!distrustPlayer Eve griefed      # mark hostile
+```
+
+Reactions can be disabled entirely with `settings.social.greetings: false`.
+
 # Legit Awareness (Radar)
 
 Borrowing the *information* side of utility clients like Meteor Client and
