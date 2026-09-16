@@ -222,8 +222,8 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Resource gathering — `!collectBlocks` / `!mineBlocks`
 * [~] Mining planner — nearest-first loop, no pit/branch strategy
 * [x] Tool selection — bestHarvestTool
-* [ ] Tool durability awareness
-* [ ] Replacement tool planning
+* [x] Tool durability awareness — `library/durability.js` reads item damage metadata (`!tools`)
+* [x] Replacement tool planning — `replacementPlan` diffs recipes vs inventory (`!replaceTool`)
 * [ ] Resource caching
 * [ ] Resource reservation
 * [x] Storage lookup — `!findItem` over the container index
@@ -258,7 +258,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Fuel management — getSmeltingFuel
 * [x] Batch crafting — quantity parameter
 * [ ] Crafting verification
-* [ ] Automatic replacement tools
+* [x] Automatic replacement tools — `!replaceTool` equips the healthiest spare or crafts a fresh one
 * [ ] Equipment preparation
 
 ### Building
@@ -304,7 +304,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Food management — auto-eat
 * [x] Armor awareness
 * [x] Equipment management — armor-manager
-* [ ] Tool durability management
+* [x] Tool durability management — durability-aware swaps in `skills.breakBlockAt`/`baritone.mineBlocks` (never dig with a nearly-dead tool)
 * [x] Bed detection — goToBed
 * [~] Sleep planning — sleeps when told/nighttime via skills; no proactive plan
 * [~] Respawn-point awareness — death position remembered; bed spawn not tracked
@@ -626,7 +626,8 @@ being filled in (world model, container index, waypoints), autonomous behavior
 exists via npc goals + self-prompter, the deliberate humanlike behavior layer
 has shipped in `src/agent/humanlike/` (seeded personality, behavior state
 machine, LOS-gated attention, interaction focus/timing, context-dependent
-idle), and navigation intelligence has landed in `src/agent/navigation/`
+idle), navigation intelligence has landed in `src/agent/navigation/`
 (hazard-aware `safe` profile, route caching with world-verified replay, and
-frontier exploration). Remaining frontier: tool durability/replacement
-planning, social profiles, and the larger autonomous task loop.
+frontier exploration), and tool durability awareness + replacement planning
+is wired through mining in `src/agent/library/durability.js`. Remaining
+frontier: social behavior profiles and the larger autonomous task loop.

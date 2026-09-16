@@ -8,6 +8,7 @@ import { setProfileName } from '../baritone/settings.js';
 import { saveAreaAsLitematic, saveAreaAsSchem } from '../schematics/capture.js';
 import { setHome, getHome } from '../navigation/home.js';
 import { explore } from '../navigation/exploration.js';
+import { replaceTool } from '../library/durability.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -677,6 +678,17 @@ export const actionsList = [
             }
             await skills.goToPosition(agent.bot, pos.x, pos.y, pos.z, 2);
             skills.log(agent.bot, `Arrived home at (${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)}).`);
+        })
+    },
+    {
+        name: '!replaceTool',
+        description: 'Replace a worn or broken tool: equips the healthiest spare from the inventory, or crafts a fresh one if materials are available.',
+        params: {
+            'tool_name': { type: 'string', description: 'The tool to replace, e.g. iron_pickaxe, stone_axe.' },
+        },
+        perform: runAsAction(async (agent, tool_name) => {
+            const summary = await replaceTool(agent.bot, tool_name, { craftFn: skills.craftRecipe });
+            skills.log(agent.bot, summary);
         })
     },
     {

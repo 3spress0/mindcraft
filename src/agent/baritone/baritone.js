@@ -21,6 +21,7 @@ import * as goals from './goals.js';
 import { applyProfile, getProfileName, profileAvoidsHazards } from './settings.js';
 import * as humanlike from '../humanlike/interaction.js';
 import { hardenMovements } from '../navigation/hazards.js';
+import { ensureUsableTool } from '../library/durability.js';
 
 /** Build a Movements instance with the bot's active (or given) profile. */
 export function buildMovements(bot, profile = null) {
@@ -193,6 +194,12 @@ export async function mineBlocks(bot, blockType, count = 1, opts = {}) {
             const bestTool = bot.pathfinder?.bestHarvestTool?.(current);
             if (bestTool) await bot.equip(bestTool, 'hand');
         } catch { /* keep whatever is in hand */ }
+
+        // Durability-aware swap: never dig with a nearly-dead tool when a
+        // healthier one is available.
+        try {
+            await ensureUsableTool(bot, current);
+        } catch { /* durability awareness must never break mining */ }
 
         // Humanlike: look at the block first, then a brief bounded pause.
         try {

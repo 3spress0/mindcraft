@@ -545,6 +545,31 @@ explore differently but each bot is reproducible.
 Exploration stops cleanly on interruption, records chunks reached per leg, and
 expands the ring automatically once the current one is fully visited.
 
+# Tool Durability & Replacement
+
+`src/agent/library/durability.js` keeps tools from silently dying mid-job. It
+is fully legit: durability comes from the item-damage metadata the server
+already sends for the bot's own inventory.
+
+* **Awareness** — `!tools` lists every tool with remaining/max durability and a
+  percentage, flagging anything below the 15% replacement threshold as `WORN`
+  and anything at zero as `BROKEN`.
+* **Durability-aware digging** — `breakBlockAt` and Baritone-style `mineBlocks`
+  call `ensureUsableTool` before each dig: if the held tool can't harvest, is
+  nearly dead, or is broken, the bot swaps in the healthiest harvestable tool
+  from its inventory instead of snapping the one in hand.
+* **Replacement planning** — `replacementPlan` checks the tool's crafting
+  recipe against the inventory and reports `craftable` now or exactly which
+  materials are missing.
+* **Automatic replacement** — `!replaceTool <tool>` equips the healthiest
+  spare, or crafts a fresh one (via the normal crafting skill) when no spare
+  exists, then equips it.
+
+```text
+!tools
+!replaceTool iron_pickaxe
+```
+
 # Legit Awareness (Radar)
 
 Borrowing the *information* side of utility clients like Meteor Client and

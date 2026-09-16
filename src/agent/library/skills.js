@@ -7,6 +7,7 @@ import { applyProfile, getProfileName, profileAvoidsHazards } from "../baritone/
 import * as humanlike from "../humanlike/interaction.js";
 import { hardenMovements } from "../navigation/hazards.js";
 import { RouteCache, routeCacheSettings, snap, downsample, verifyRoute } from "../navigation/route_cache.js";
+import * as durability from "./durability.js";
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -693,6 +694,8 @@ export async function breakBlockAt(bot, x, y, z) {
                 log(bot, `Don't have right tools to break ${block.name}.`);
                 return false;
             }
+            // durability-aware swap: prefer a tool with life left
+            try { await durability.ensureUsableTool(bot, block); } catch (e) { void e; }
         }
         // humanlike: look at the block first, brief bounded pause, then dig
         await humanlike.focusOn(bot, block.position, bot._personality);

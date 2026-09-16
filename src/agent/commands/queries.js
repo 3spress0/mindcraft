@@ -13,6 +13,7 @@ import { getStorageIndex, saveStorageIndex } from '../storage/index.js';
 import { getHome } from '../navigation/home.js';
 import { hazardReport, scanHazards } from '../navigation/hazards.js';
 import * as skills from '../library/skills.js';
+import { toolsReport } from '../library/durability.js';
 
 const pad = (str) => {
     return '\n' + str + '\n';
@@ -252,6 +253,13 @@ export const queryList = [
             const stats = skills.routeCacheStats(agent.bot);
             if (!stats) return pad('Route caching is disabled (settings.navigation.route_cache.enabled).');
             return pad(`Route cache: ${stats.entries}/${stats.maxEntries} routes remembered (TTL ${Math.round(stats.ttlMs / 60000)} min). Stored at ${stats.file}.`);
+        }
+    },
+    {
+        name: "!tools",
+        description: "Report the durability of every tool in the inventory, flagging worn/broken ones and whether replacements are craftable or which materials are missing.",
+        perform: function (agent) {
+            return pad(toolsReport(agent.bot));
         }
     },
     {
