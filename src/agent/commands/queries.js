@@ -317,6 +317,20 @@ export const queryList = [
             if (pos) lines.push(`Position: (${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)})`);
             lines.push(`Health: ${Math.round(bot.health ?? 0)}/20, Hunger: ${Math.round(bot.food ?? 0)}/20`);
 
+            // Humanlike behavior layer (state machine + attention)
+            try {
+                const fsm = agent.behavior_state;
+                if (fsm) {
+                    let line = `Behavior: state=${fsm.current}`;
+                    if (fsm.activity) line += `, doing=${fsm.activity}`;
+                    if (fsm.hasPendingResume?.()) line += `, will-resume=${fsm.peekPendingResume()}`;
+                    lines.push(line);
+                }
+                const attn = agent.attention?.summarize?.();
+                if (attn) lines.push(`Attention: ${attn.players} player(s), ${attn.mobs} mob(s), ${attn.items} item(s) seen recently`);
+                if (agent.personality) lines.push(`Personality: ${agent.personality.preset} (seed ${agent.personality.seed})`);
+            } catch { /* behavior layer optional */ }
+
             // Navigation (Baritone layer)
             try {
                 lines.push(`Navigation: ${baritoneStatus(bot)}`);

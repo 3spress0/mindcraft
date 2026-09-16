@@ -19,6 +19,7 @@ import pf from 'mineflayer-pathfinder';
 import * as world from '../library/world.js';
 import * as goals from './goals.js';
 import { applyProfile, getProfileName } from './settings.js';
+import * as humanlike from '../humanlike/interaction.js';
 
 /** Build a Movements instance with the bot's active (or given) profile. */
 export function buildMovements(bot, profile = null) {
@@ -189,6 +190,12 @@ export async function mineBlocks(bot, blockType, count = 1, opts = {}) {
             const bestTool = bot.pathfinder?.bestHarvestTool?.(current);
             if (bestTool) await bot.equip(bestTool, 'hand');
         } catch { /* keep whatever is in hand */ }
+
+        // Humanlike: look at the block first, then a brief bounded pause.
+        try {
+            await humanlike.focusOn(bot, current.position, bot._personality, { dwell: [60, 200] });
+            await humanlike.pause(bot, bot._personality, 'dig');
+        } catch { /* humanization must never break mining */ }
 
         try {
             await bot.dig(current);

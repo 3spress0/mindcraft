@@ -3,6 +3,8 @@ import * as world from './library/world.js';
 import * as mc from '../utils/mcdata.js';
 import settings from './settings.js'
 import convoManager from './conversation.js';
+import { glance } from './humanlike/attention.js';
+import { chooseIdleAction, runIdleAction } from './humanlike/idle.js';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
@@ -21,7 +23,7 @@ async function say(agent, message) {
 // the order of this list matters! first modes will be prioritized
 // while update functions are async, they should *not* be awaited longer than ~100ms as it will block the update loop
 // to perform longer actions, use the execute function which won't block the update loop
-const modes_list = [
+export const modes_list = [
     {
         name: 'self_preservation',
         description: 'Respond to drowning, burning, and damage at low health. Interrupts all actions.',
@@ -259,39 +261,97 @@ const modes_list = [
     },
     {
         name: 'idle_staring',
-        description: 'Animation to look around at entities when idle.',
+        description: 'Humanlike idle looking: glance at things that are actually visible (line-of-sight), with bounded, personality-driven timing.',
         interrupts: [],
         on: true,
         active: false,
 
-        staring: false,
-        last_entity: null,
         next_change: 0,
+        busy_until: 0,
         update: function (agent) {
-            const entity = agent.bot.nearestEntity();
-            let entity_in_view = entity && entity.position.distanceTo(agent.bot.entity.position) < 10 && entity.name !== 'enderman';
-            if (entity_in_view && entity !== this.last_entity) {
-                this.staring = true;
-                this.last_entity = entity;
-                this.next_change = Date.now() + Math.random() * 1000 + 4000;
+            const now = Date.now();
+            if (now < this.busy_until) return;
+            const bot = agent.bot;
+            const personality = agent.personality || bot._personality;
+            const attention = agent.attention || bot._attention;
+
+            // Perception-driven: sudden events (damage taken, nearby hurt entities) pull the gaze.
+            let event = null;
+            try { event = attention ? attention.freshEvent() : null; } catch (e) { event = null; }
+            if (event && now >= this.next_change) {
+                this.busy_until = now + 1300;
+                this.next_change = now + (personality ? personality.timing(2500, 0.4) : 2500);
+                glance(bot, { x: event.x, y: event.y, z: event.z }, personality, { minDwellMs: 300, maxDwellMs: 900 })
+                    .catch(() => {});
+                return;
             }
-            if (entity_in_view && this.staring) {
-                let isbaby = entity.type !== 'player' && entity.metadata[16];
-                let height = isbaby ? entity.height/2 : entity.height;
-                agent.bot.lookAt(entity.position.offset(0, height, 0));
+            if (now < this.next_change) return;
+
+            // Personality-driven cadence: curious bots look around more often.
+            const traits = personality?.traits ?? {};
+            const mid = 4500 + (1 - (traits.curiosity ?? 0.5)) * 4000;
+            this.next_change = now + (personality ? personality.timing(mid, 0.35) : mid);
+
+            // Notice things that are actually visible (never stare through walls).
+            let sights = [];
+            try { sights = attention ? attention.scan(bot, { range: 16 }) : []; } catch (e) { sights = []; }
+            if (sights.length && personality && personality.tendency(0.55, 'curiosity')) {
+                const target = sights[0];
+                const height = target.kind === 'player' ? 1.5 : 0.9;
+                this.busy_until = now + 1500;
+                glance(bot, { x: target.pos.x, y: target.pos.y + height, z: target.pos.z }, personality)
+                    .catch(() => {});
+                return;
             }
-            if (!entity_in_view)
-                this.last_entity = null;
-            if (Date.now() > this.next_change) {
-                // look in random direction
-                this.staring = Math.random() < 0.3;
-                if (!this.staring) {
-                    const yaw = Math.random() * Math.PI * 2;
-                    const pitch = (Math.random() * Math.PI/2) - Math.PI/4;
-                    agent.bot.look(yaw, pitch, false);
-                }
-                this.next_change = Date.now() + Math.random() * 10000 + 2000;
+            // Otherwise a small bounded look-around flick.
+            const rng = personality?.rng;
+            const yaw = (bot.entity?.yaw ?? 0) + (rng ? rng.range(-1.2, 1.2) : 0.6);
+            const pitch = rng ? rng.range(-0.35, 0.25) : -0.1;
+            bot.look(yaw, pitch, false);
+        }
+    },
+    {
+        name: 'idle_behavior',
+        description: 'Context-dependent idle activities: short safe wanders, checking the bag, looking around the area.',
+        interrupts: [],
+        on: true,
+        active: false,
+
+        cooldown_until: 0,
+        running: false,
+        update: function (agent) {
+            if (this.running) return;
+            const now = Date.now();
+            if (now < this.cooldown_until) return;
+            const bot = agent.bot;
+            const personality = agent.personality || bot._personality;
+            const attention = agent.attention || bot._attention;
+            const idleForMs = typeof agent.idleForMs === 'function' ? agent.idleForMs() : 0;
+
+            let recentDanger = false;
+            try { recentDanger = !!attention?.freshEvent?.(); } catch (e) { recentDanger = false; }
+            const choice = chooseIdleAction({
+                idleForMs,
+                state: agent.behavior_state?.current,
+                recentDanger,
+                novelSights: []
+            }, personality);
+
+            // glance/pause are covered by idle_staring; this mode only performs
+            // the longer, rarer activities and only after real idle time.
+            if (!['wander', 'inspect', 'scan'].includes(choice.action)) {
+                // back off briefly instead of re-rolling every tick
+                this.cooldown_until = now + (personality ? personality.timing(4000, 0.5) : 4000);
+                return;
             }
+
+            this.running = true;
+            const traits = personality?.traits ?? {};
+            const baseCooldown = 18000 + (1 - (traits.restlessness ?? 0.25)) * 27000;
+            this.cooldown_until = now + (personality ? personality.timing(baseCooldown, 0.3) : baseCooldown);
+            runIdleAction(bot, choice, personality, attention)
+                .catch(() => {})
+                .finally(() => { this.running = false; });
         }
     },
     {

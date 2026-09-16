@@ -21,6 +21,9 @@ import convoManager from './conversation.js';
 import { addBrowserViewer } from './vision/browser_viewer.js';
 import { serverProxy, sendOutputToServer } from './mindserver_proxy.js';
 import { getStorageIndex } from './storage/index.js';
+import { createPersonality } from './humanlike/personality.js';
+import { BehaviorStateMachine } from './humanlike/behavior_state.js';
+import { AttentionTracker } from './humanlike/attention.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
@@ -120,6 +123,48 @@ export class Agent {
         });
 
         initModes(this);
+
+        // ---- humanlike behavior layer (seeded, bounded; src/agent/humanlike/) ----
+        try {
+            const hl = settings.humanlike ?? {};
+            const preset = hl.personality?.preset ?? 'default';
+            const overrides = hl.personality?.overrides ?? {};
+            this.personality = createPersonality({
+                seed: hl.seed ?? null,
+                name: this.name || 'mindcraft',
+                preset,
+                overrides
+            });
+            this.behavior_state = new BehaviorStateMachine();
+            this.attention = new AttentionTracker();
+            this.last_activity_change = Date.now();
+            // mirrors on the bot so skills/modes can reach the layer without the agent ref
+            this.bot._personality = this.personality;
+            this.bot._behavior_state = this.behavior_state;
+            this.bot._attention = this.attention;
+
+            // perception-driven reactions: remember sudden events worth turning toward
+            this.bot.on('entityHurt', (entity) => {
+                try {
+                    const pos = entity?.position;
+                    const self = this.bot.entity?.position;
+                    if (pos && self && pos.distanceTo(self) < 24) {
+                        this.attention.recordEvent(pos.x, pos.y + 1, pos.z, 'entity_hurt');
+                    }
+                } catch (e) { /* never let reaction hooks break the bot */ }
+            });
+            this.bot.on('health', () => {
+                try {
+                    const self = this.bot.entity?.position;
+                    if (self) this.attention.recordEvent(self.x, self.y + 1, self.z, 'damage');
+                } catch (e) { /* ignore */ }
+            });
+        } catch (e) {
+            console.error('Humanlike layer init failed:', e);
+            this.personality = createPersonality({ name: this.name || 'mindcraft' });
+            this.behavior_state = new BehaviorStateMachine();
+            this.attention = new AttentionTracker();
+        }
 
         this.bot.on('login', () => {
             console.log(this.name, 'logged in!');
@@ -850,10 +895,42 @@ export class Agent {
     }
 
     async update(delta) {
+        this.syncBehaviorState();
         await this.bot.modes.update();
         this.self_prompter.update(delta);
         this.observation_collector?.tick?.();
         await this.checkTaskDone();
+    }
+
+    /**
+     * Keep the humanlike behavior state machine honest by mirroring what the
+     * action manager is doing. This never drives actions itself — modes and
+     * skills consult it for context-dependent idle/reaction behavior.
+     */
+    syncBehaviorState() {
+        try {
+            const fsm = this.behavior_state;
+            if (!fsm) return;
+            const label = this.actions?.currentActionLabel;
+            if (!this.isIdle() && label) {
+                if (fsm.current === 'idle' || fsm.current === 'observe' || fsm.current === 'decide') {
+                    fsm.beginActivity(label);
+                    this.last_activity_change = Date.now();
+                } else if (fsm.activity !== label && (fsm.current === 'act' || fsm.current === 'verify')) {
+                    fsm.activity = label;
+                }
+            } else if (this.isIdle() && fsm.current === 'act') {
+                fsm.finish(true);
+                this.last_activity_change = Date.now();
+            } else if (this.isIdle() && fsm.current === 'verify') {
+                fsm.finish(true);
+            }
+        } catch (e) { /* the FSM is advisory; never break the update loop */ }
+    }
+
+    /** Milliseconds since the last activity started/finished transition. */
+    idleForMs() {
+        return Date.now() - (this.last_activity_change ?? Date.now());
     }
 
     isIdle() {

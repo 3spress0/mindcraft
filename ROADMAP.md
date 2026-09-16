@@ -27,7 +27,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [~] Checkpointing — construction registry snapshots; plan state persisted per step
 * [x] Automatic replanning — `planning/recovery.js`, `!planReplan`, critic
 * [x] Failure/recovery manager — `planning/recovery.js` + recovery tests
-* [ ] State machine for major activities
+* [x] State machine for major activities — `humanlike/behavior_state.js` FSM (IDLE→OBSERVE→DECIDE→ACT→VERIFY→REACT/INTERRUPTED/RECOVER→RESUME), mirrored from the action manager in `agent.js`
 
 ### Humanlike behavior
 
@@ -37,8 +37,8 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Idle behavior — `idle_staring` mode + idle glances
 * [x] Looking around naturally — idle glances
 * [x] Natural camera/head movement — humanizer gaze smoothing
-* [ ] Look toward interesting entities
-* [~] Look at blocks before interacting — placeBlock lookAt; not generalized
+* [x] Look toward interesting entities — `humanlike/attention.js` novelty glances (players/mobs/items, LOS-gated)
+* [x] Look at blocks before interacting — `humanlike/interaction.focusOn` wired into dig/place/mine
 * [x] Imperfect camera movements — gaze jitter
 * [x] Humanlike turning arcs — max turn rate per tick
 * [x] Occasional small aim corrections — jitter + easing gain
@@ -53,14 +53,14 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Humanlike swimming
 * [ ] Humanlike climbing
 * [ ] Humanlike bridge/build movement
-* [x] Humanlike block interaction timing — `block_place_delay`
+* [x] Humanlike block interaction timing — `block_place_delay` + `humanlike/interaction.js` pauses
 * [x] Variable click/interact timing — delay jitter in skills
-* [ ] Variable mining timing
+* [x] Variable mining timing — bounded dig pause + focus before each dig (skills + baritone)
 * [x] Variable placement timing
 * [x] Small reaction delays — `reaction_delay_ms`
 * [ ] Context-dependent reaction speed
-* [ ] Natural inventory navigation
-* [ ] Natural hotbar selection
+* [~] Natural inventory navigation — bounded container-open pauses (`window_pause_ms`); slot moves still instant
+* [~] Natural hotbar selection — bounded equip/swap pauses via `naturalEquip` + `skills.equip`
 * [ ] Avoid unnecessary inventory rearrangement
 * [x] Occasionally inspect surroundings — idle staring mode
 * [x] Notice nearby players — collector + radar into AI context
@@ -68,11 +68,11 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Notice dropped items — item facts + item_collecting mode
 * [x] React to damage — self_preservation + entityHurt
 * [ ] React to explosions
-* [ ] React to unexpected events
+* [~] React to unexpected events — attention records entityHurt/damage events and the idle gaze turns toward them; no task-level interruption yet
 * [~] Retreat when surprised — cowardice is proximity-based, not surprise-based
 * [ ] Hesitate before uncertain actions
 * [ ] Prefer safe routes when appropriate
-* [ ] Occasional idle wandering
+* [x] Occasional idle wandering — `idle_behavior` mode: hazard-checked `shortWander`, gated by restlessness + idle time
 * [ ] Sit/stand behavior where applicable
 * [x] Natural sleep behavior — `goToBed` skill/nighttime flow
 * [x] Natural eating behavior — mineflayer-auto-eat
@@ -81,19 +81,19 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Bring appropriate tools before leaving
 * [ ] Return home after completing errands
 * [ ] Humanlike exploration patterns
-* [ ] Avoid constantly looking at entities through walls
+* [x] Avoid constantly looking at entities through walls — idle staring now gated by `lineOfSight`
 * [x] Only use information the bot could legitimately observe — legit radar posture
 * [x] Perception range constraints — radar ranges + collector entity_radius
-* [~] Line-of-sight-aware perception — `lineOfSight` available; perception not yet gated by it
+* [x] Line-of-sight-aware perception — attention scans/glances gated by `lineOfSight`
 * [x] Memory decay — confidence decay with half-life
 * [x] Uncertainty in remembered information — fact confidence
-* [~] Behavioral personality configuration — profiles/npc data; no personality schema
-* [x] Different behavior profiles — agent profiles + movement profiles
+* [x] Behavioral personality configuration — `humanlike/personality.js`: seeded trait vectors (pace/curiosity/caution/restlessness/sociability/precision), presets, overrides
+* [x] Different behavior profiles — agent profiles + movement profiles + personality presets
 * [ ] Conservative/aggressive exploration preferences
 * [ ] Social behavior profiles
-* [~] Configurable idle behavior — humanlike idle knobs; idle mode itself fixed
+* [x] Configurable idle behavior — `humanlike.idle` settings drive the `idle_behavior` mode
 * [ ] Configurable risk tolerance
-* [~] Non-deterministic but reproducible behavior seeds — benchmark scenarios seeded; live behavior not
+* [x] Non-deterministic but reproducible behavior seeds — personality seeded from bot name / `humanlike.seed`; all randomness in `humanlike/rng.js` with reproducible tests
 
 ### Perception
 
@@ -406,7 +406,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [~] Avoid unnecessary actions — prompt-guided
 * [~] Avoid unnecessary travel — prompt-guided
 * [ ] Batch related tasks
-* [~] Remember ongoing intent — npc goals persist; LLM-side intent not
+* [x] Remember ongoing intent — behavior FSM activity stack (interrupt→remember→resume) + npc goals persist
 * [~] Contextual tool choice — bestHarvestTool for mining; general choice is LLM-driven
 * [ ] Contextual route choice
 * [ ] Contextual interaction choice
@@ -623,5 +623,8 @@ The key progression is:
 Current position in that progression: commands/actions are mature, tasks and
 plans are solid with verification and recovery, persistent world knowledge is
 being filled in (world model, container index, waypoints), autonomous behavior
-exists via npc goals + self-prompter, humanlike believability is the active
-frontier (gaze/pace humanizer shipped; path and interaction variety pending).
+exists via npc goals + self-prompter, and the deliberate humanlike behavior
+layer has shipped in `src/agent/humanlike/` — seeded personality, behavior
+state machine, LOS-gated attention, interaction focus/timing, and
+context-dependent idle. Remaining frontier: route variety/caching, exploration
+patterns, social profiles, and the autonomous task loop.

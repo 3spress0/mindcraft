@@ -4,6 +4,7 @@ import pf from 'mineflayer-pathfinder';
 import Vec3 from 'vec3';
 import settings from "../../../settings.js";
 import { applyProfile, getProfileName } from "../baritone/settings.js";
+import * as humanlike from "../humanlike/interaction.js";
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -691,7 +692,11 @@ export async function breakBlockAt(bot, x, y, z) {
                 return false;
             }
         }
+        // humanlike: look at the block first, brief bounded pause, then dig
+        await humanlike.focusOn(bot, block.position, bot._personality);
+        await humanlike.pause(bot, bot._personality, 'dig');
         await bot.dig(block, true);
+        await humanlike.pause(bot, bot._personality, 'post');
         log(bot, `Broke ${block.name} at x:${x.toFixed(1)}, y:${y.toFixed(1)}, z:${z.toFixed(1)}.`);
     }
     else {
@@ -871,6 +876,9 @@ export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dont
         else {
             await bot.equip(block_item, 'hand');
             await bot.lookAt(buildOffBlock.position.offset(0.5, 0.5, 0.5));
+            // humanlike: brief bounded dwell before placing
+            await humanlike.focusOn(bot, buildOffBlock.position, bot._personality, { dwell: [80, 250] });
+            await humanlike.pause(bot, bot._personality, 'place');
             await bot.placeBlock(buildOffBlock, faceVec);
             log(bot, `Placed ${blockType} at ${target_dest}.`);
             await new Promise(resolve => setTimeout(resolve, 200));
@@ -907,6 +915,8 @@ export async function equip(bot, itemName) {
             return false;
         }
     }
+    // humanlike: natural swap pause before equipping
+    await humanlike.pause(bot, bot._personality, 'equip');
     if (itemName.includes('leggings')) {
         await bot.equip(item, 'legs');
     }
@@ -982,6 +992,7 @@ export async function putInChest(bot, itemName, num=-1) {
     }
     let to_put = num === -1 ? item.count : Math.min(num, item.count);
     await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
+    await humanlike.pause(bot, bot._personality, "window"); // humanlike: natural container-open pause
     const chestContainer = await bot.openContainer(chest);
     await chestContainer.deposit(item.type, null, to_put);
     await chestContainer.close();
@@ -1009,6 +1020,7 @@ export async function takeFromChest(bot, itemName, num=-1) {
         return false;
     }
     await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
+    await humanlike.pause(bot, bot._personality, "window"); // humanlike: natural container-open pause
     const chestContainer = await bot.openContainer(chest);
     
     // Find all matching items in the chest
@@ -1059,6 +1071,7 @@ export async function viewChest(bot) {
         return false;
     }
     await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
+    await humanlike.pause(bot, bot._personality, "window"); // humanlike: natural container-open pause
     const chestContainer = await bot.openContainer(chest);
     let items = chestContainer.containerItems();
     // Feed the legit storage index: we just saw this container's contents.

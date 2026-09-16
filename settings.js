@@ -104,8 +104,8 @@ const settings = {
     // Humanlike locomotion layered on top of mineflayer-pathfinder (the mineflayer
     // equivalent of Baritone). Removes robotic movement tells: instant head snaps
     // with a perfectly level stare, nonstop sprinting, zero reaction time, and a
-    // frozen stance while idle. Digging, building, combat and scripted lookAt calls
-    // are never affected.
+    // frozen stance while idle. Interaction timing (dig/place/equip/chest) is
+    // humanized separately by src/agent/humanlike/interaction.js.
     "humanlike": {
         "enabled": true,          // master switch; can also be toggled at runtime via bot.humanizer.setEnabled()
         "smooth_gaze": true,      // ease/rate-limit head turns, add micro-jitter and natural vertical gaze wander
@@ -124,6 +124,32 @@ const settings = {
         "idle_max_s": 10,         // max seconds between idle glances
         "idle_arm_swing": false,  // occasionally swing the arm while idle (off by default)
         "external_look_hold_ms": 2500, // don't idle-glance for this long after a scripted look/lookAt
+
+        // ---- deliberate behavior layer (seeded, bounded; see src/agent/humanlike/) ----
+        "seed": null,             // optional fixed seed; defaults to a hash of the bot's name
+        "personality": {
+            "preset": "default",  // default | curious | cautious | energetic | laidback | social
+            "overrides": {}       // exact trait values, e.g. { "curiosity": 0.9 }
+        },
+        "interaction": {
+            "enabled": true,                 // humanize dig/place/equip/chest timing & focus
+            "focus_before_action": true,     // glance at the block before digging/placing
+            "focus_dwell_ms": [120, 450],    // pre-action glance hold
+            "focus_offset": 0.18,            // bounded glance imprecision (blocks)
+            "dig_pause_ms": [80, 280],
+            "place_pause_ms": [60, 220],
+            "equip_pause_ms": [50, 250],
+            "window_pause_ms": [150, 450],
+            "post_action_pause_ms": [60, 200]
+        },
+        "idle": {
+            "enabled": true,
+            "wander": true,         // short walks to a safe nearby spot when idle a while
+            "inspect": true,        // occasionally "check the bag" (look-down pause)
+            "min_idle_ms": 5000,    // settle before idling after an activity
+            "wander_after_ms": 12000,
+            "radius": 4
+        }
     },
 
 

@@ -566,16 +566,77 @@ It provides controlled variation in:
 * Idle behavior
 * Per-bot movement personality
 
-The system deliberately bypasses humanization where precise control is required, such as:
+The system deliberately bypasses locomotion humanization where precise control is required, such as:
 
-* Digging
-* Block placement
 * PvP aiming
 * Riding
 * Swimming
 * Explicit skill-driven camera control
 
+(Digging and block placement are *timing*-humanized separately by the behavior
+layer below, without affecting the pathfinder's precise movement.)
+
 Humanization is intended to make movement behavior less rigid; it is not intended as a mechanism for bypassing server security systems.
+
+# Humanlike Behavior Layer
+
+Beyond locomotion, `src/agent/humanlike/` is a deliberate behavior layer where
+**all** randomness lives — seeded, bounded, and reproducible:
+
+* **`rng.js`** — seeded PRNG (mulberry32 + FNV-1a string hashing) with bounded
+  helpers: `range`, `int`, `chance`, `pick`, `triangular`, `jitter`, `bell`.
+* **`personality.js`** — per-bot trait vectors derived deterministically from a
+  seed (defaults to a hash of the bot name): `pace`, `curiosity`, `caution`,
+  `restlessness`, `sociability`, `precision`. Presets: `default`, `curious`,
+  `cautious`, `energetic`, `laidback`, `social`; exact values can be pinned via
+  overrides. Same seed ⇒ identical behavior, so tests are reproducible.
+* **`behavior_state.js`** — explicit state machine
+  `IDLE → OBSERVE → DECIDE → ACT → VERIFY → REACT/INTERRUPTED/RECOVER → RESUME`.
+  It remembers interrupted activities on a stack so the bot can resume what it
+  was doing, and it is mirrored from the action manager in `agent.js`.
+* **`attention.js`** — line-of-sight-gated sightings (no staring through
+  walls), novelty detection, last-seen tracking, sudden-event recording
+  (`entityHurt`, damage), and bounded glances with imprecision.
+* **`interaction.js`** — look-before-you-act focus and bounded, personality-
+  scaled pauses for digging, placing, equipping, and opening containers, wired
+  into `skills.breakBlockAt/placeBlock/equip`, chest skills, and Baritone-style
+  mining. Gated off automatically in cheat mode and via `bot._humanlike_off`.
+* **`idle.js`** — context-dependent idle selection: glances at novel sights,
+  short hazard-checked wanders (gated by restlessness and idle time),
+  "checking the bag" look-downs, and bounded look-around sweeps.
+
+Wiring:
+
+* `idle_staring` mode now glances only at things the bot can actually see,
+  turns toward fresh events, and uses personality-driven cadence.
+* `idle_behavior` mode performs the longer idle activities with long cooldowns.
+* `!status` reports the behavior state, pending resume, attention summary, and
+  personality preset/seed.
+
+Configuration lives under `settings.humanlike`:
+
+```jsonc
+"humanlike": {
+    "enabled": true,
+    "seed": null,                  // fixed seed for reproducibility (else bot-name hash)
+    "personality": {
+        "preset": "default",      // default|curious|cautious|energetic|laidback|social
+        "overrides": {}            // e.g. { "curiosity": 0.9 }
+    },
+    "interaction": {
+        "enabled": true,
+        "dig_pause_ms": [80, 280],
+        "place_pause_ms": [60, 220],
+        "equip_pause_ms": [50, 250],
+        "window_pause_ms": [150, 450]
+        // ... focus_dwell_ms, focus_offset, post_action_pause_ms
+    },
+    "idle": { "enabled": true, "wander": true, "inspect": true, "radius": 4 }
+}
+```
+
+All timing values are [min, max] envelopes; actual waits are triangular within
+the envelope and scaled by the bot's `pace` trait, so every delay stays bounded.
 
 # Coding and Sandboxing
 
