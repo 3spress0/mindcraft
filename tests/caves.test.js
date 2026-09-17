@@ -190,3 +190,37 @@ describe('cave safety & guided entry', () => {
         assert.equal(placed.length, 1, 'torch placed on the entrance floor');
     });
 });
+
+describe('cave path profile (baritone posture)', () => {
+    it('cave profile exists, is hazard-aware, and applies to movements', async () => {
+        const { PROFILES, profileAvoidsHazards, applyProfile, setProfileName, getProfileName } =
+            await import('../src/agent/baritone/settings.js');
+        assert.ok(PROFILES.cave, 'cave profile registered');
+        assert.equal(profileAvoidsHazards('cave'), true);
+        const movements = { canDig: false, allowSprinting: true, maxDropDown: 99, digCost: 100, placeCost: 100 };
+        applyProfile(movements, 'cave');
+        assert.equal(movements.canDig, true, 'caving may clear gravel');
+        assert.equal(movements.allowSprinting, false);
+        assert.ok(movements.maxDropDown <= 3, 'small drops underground');
+        const fakeBot = {};
+        setProfileName(fakeBot, 'cave');
+        assert.equal(getProfileName(fakeBot), 'cave');
+    });
+
+    it('enterCave switches the path profile to cave', async () => {
+        const map = new MentalMap({ botName: 'ProfileCaveBot', dir: tmp });
+        map.note({ x: 4, y: 64, z: 2 }, { name: 'cave-4-2', type: 'cave' });
+        const bot = caveBot({ openings: [{ x: 4, y: 64, z: 2 }] });
+        bot.lightAt = () => 2;
+        bot.inventory = { slots: [] };
+        bot.game = { gameMode: 'survival' };
+        bot.modes = { isOn: (m) => m === 'cheat' };
+        bot.chat = () => {};
+        bot._personality = {};
+        const agent = { bot, _mental_map: map };
+        const msg = await enterCave(agent, 'cave-4-2');
+        assert.match(msg, /path profile default -> cave/);
+        assert.equal(bot._baritone_profile, 'cave');
+        assert.equal(bot._cave_prev_profile, 'default');
+    });
+});

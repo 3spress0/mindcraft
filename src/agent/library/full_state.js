@@ -3,6 +3,7 @@
  */
 
 import { playerPositionSnapshot, groundItems } from '../sensors/radar.js';
+import { dangerSummary } from '../sensors/danger.js';
 
 let _world = null;
 let _convoManager = null;
@@ -61,6 +62,15 @@ function safeGroundItems(bot) {
         return counts;
     } catch {
         return {};
+    }
+}
+
+/** Danger awareness for the LLM: monsters, hazards, darkness — never throws. */
+function safeDanger(bot) {
+    try {
+        return dangerSummary(bot, {});
+    } catch {
+        return null;
     }
 }
 
@@ -183,6 +193,10 @@ export function getFullState(agent) {
             playerPositions: safePlayerPositions(bot),
             groundItems: safeGroundItems(bot),
         },
+        // Legit danger awareness: monsters (with threat scores), hazards,
+        // risk level, underground/darkness — so the LLM can reason about
+        // safety instead of stumbling into it.
+        danger: safeDanger(bot),
         modes: {
             summary: bot.modes.getMiniDocs()
         }

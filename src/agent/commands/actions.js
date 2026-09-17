@@ -416,9 +416,9 @@ export const actionsList = [
     },
     {
         name: '!setPathProfile',
-        description: 'Set the Baritone-style movement profile used for all pathfinding. Options: default (balanced), legit (no sprint/parkour/digging, human-like), fast (sprint+parkour+digging), builder (never dig, cheap placement), safe (legit + routes around hazards like magma, berry bushes, cacti, campfires).',
+        description: 'Set the Baritone-style movement profile used for all pathfinding. Options: default (balanced), legit (no sprint/parkour/digging, human-like), fast (sprint+parkour+digging), builder (never dig, cheap placement), safe (legit + routes around hazards like magma, berry bushes, cacti, campfires), cave (hazard-aware underground, may dig gravel).',
         params: {
-            'profile': { type: 'string', description: 'One of: default, legit, fast, builder, safe.' },
+            'profile': { type: 'string', description: 'One of: default, legit, fast, builder, safe, cave.' },
         },
         perform: async function (agent, profile) {
             try {

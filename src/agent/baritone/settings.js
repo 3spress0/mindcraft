@@ -12,6 +12,8 @@
  *   fast         prioritize speed: sprint + parkour + free to dig.
  *   builder      for schematic builds: never dig, cheap placement,
  *                scaffolding-friendly.
+ *   safe         legit + routes around hazard blocks.
+ *   cave         underground posture: hazard-aware, small drops, moderate dig.
  *
  * Profiles are stored per-bot so `!setPathProfile` affects all subsequent
  * navigation (skills.goToGoal reads it) without changing any call sites.
@@ -71,6 +73,20 @@ export const PROFILES = {
             maxDropDown: 2,
             digCost: 1,
             placeCost: 2,
+        },
+    },
+    cave: {
+        description: 'Underground posture: hazard-aware, no sprint/parkour, small drops, and willing to dig through gravel or narrow passages at moderate cost.',
+        hazards: true,
+        tweaks: {
+            allowSprinting: false,
+            allowParkour: false,
+            allowFreeMotion: false,
+            canDig: true,
+            digCost: 3,      // caving often needs to dig; keep it affordable
+            placeCost: 1.5,  // cheap pillar/scaffold placement in shafts
+            allow1by1towers: true,
+            maxDropDown: 3,
         },
     },
 };

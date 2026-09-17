@@ -19,6 +19,7 @@ import { hazardReport, scanHazards } from '../navigation/hazards.js';
 import { listCaves } from '../navigation/caves.js';
 import { listPortals, planPortalTrip, notePortalsIfNear } from '../navigation/portals.js';
 import { listSharedBases } from '../navigation/shared_bases.js';
+import { dangerReport } from '../sensors/danger.js';
 import * as skills from '../library/skills.js';
 import { toolsReport } from '../library/durability.js';
 
@@ -679,6 +680,18 @@ export const queryList = [
                 lines.push('Cannot be placed (no block item, skipped at build): ' + formatMaterialCounts(info.skipped, 50));
             }
             return pad(lines.join('\n'));
+        }
+    },
+    {
+        name: '!threats',
+        description: 'Report what could hurt the bot right now: hostile mobs with distance and threat score, nearby hazards (lava, fire, ...), risk level, and whether it is underground/dark.',
+        params: {},
+        perform: function (agent) {
+            try {
+                return pad('Danger report: ' + dangerReport(agent.bot, {}));
+            } catch (e) {
+                return pad(`Could not assess danger: ${e.message}`);
+            }
         }
     },
     {

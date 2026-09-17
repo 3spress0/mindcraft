@@ -107,6 +107,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Line-of-sight system — `radar.lineOfSight`
 * [ ] Visibility scoring
 * [x] Threat detection — collector threat classification + self_defense
+* [x] Danger awareness fed to the LLM — `sensors/danger.js` puts threat-scored monsters, hazard blocks, autonomy risk level, and underground/darkness into `getFullState().danger` every turn (legit, server-reported only); `!threats` for an on-demand digest
 * [x] Nearby-player awareness
 * [x] Nearby-mob awareness
 * [ ] Sound/event awareness where Mineflayer exposes it
@@ -152,7 +153,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Hostile-mob avoidance — cowardice keeps distance; not wired into path costs
 * [ ] Safe route scoring
 * [x] Vertical navigation — pathfinder towers + `!digDown`/`!goToSurface`
-* [~] Cave navigation — openings detected/remembered, mouths safety-checked for lava/fire, guided torch-lit entry (`navigation/caves.js`, `!caves`/`!enterCave`); no dedicated 3D pathfinding yet
+* [~] Cave navigation — openings detected/remembered, mouths safety-checked, guided torch-lit entry, and a dedicated baritone `cave` posture (hazard-aware, small drops, may clear gravel) that `!enterCave` selects; low-level pathfinding stays with baritone/pathfinder, no bespoke 3D planner
 * [x] Surface navigation — `goToSurface`
 * [~] Nether navigation — dimension-aware + nether benchmark scenario; no dedicated logic
 * [x] Portal routing — `navigation/portals.js`: 1:8 coordinate math, step-by-step guidance (`!portalPlan`) AND execution (`executePortalTrip`, `!travelViaNether`): walk to a known portal, wait out the server-side transition, follow the nether-side route — no teleporting
@@ -682,5 +683,9 @@ safety-checked and entered with a torch (`!enterCave`), the nether shortcut
 is not just planned but executed leg by leg (`!travelViaNether`), and combat
 is polished defensively: per-mob threat scoring, weapon + shield readiness,
 and an explicit emergency-escape flow (`autonomy/combat.js`, `!escape`).
-Remaining frontier: dedicated 3D cave pathfinding, safe-zone seeking, and
-threat-driven posture changes in the autonomy loop.
+Danger is no longer invisible to the planner either: threat-scored monsters,
+hazard blocks, risk level, and underground/darkness ride along in the LLM's
+full state every turn (`sensors/danger.js`, `!threats`), and caving uses a
+dedicated baritone `cave` posture instead of bespoke pathfinding. Remaining
+frontier: safe-zone seeking, threat-driven posture changes in the autonomy
+loop, and persistent danger maps in the world model.

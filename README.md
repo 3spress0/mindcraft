@@ -477,8 +477,10 @@ depending on Baritone itself, which would need a separate Java process).
 * **Movement profiles** — named presets that tune the pathfinder the way
   Baritone's `#set` options do: `default`, `legit` (no sprinting/parkour/digging,
   human-like), `fast` (sprint + parkour + digging), `builder` (never dig,
-  cheap placement), and `safe` (legit + hazard avoidance). Profiles are stored
-  per-bot and apply to all navigation.
+  cheap placement), `safe` (legit + hazard avoidance), and `cave` (legit +
+  hazard avoidance + allows clearing gravel/cobble, tighter drop allowance —
+  tuned for tight underground spaces). Profiles are stored per-bot and apply
+  to all navigation.
 * **Path preview** — dry-run a path without moving and report whether it exists
   and how long it is, like Baritone's `#calc`.
 * **Mining** — `#mine`-style behavior: locate the nearest matching block, path
@@ -489,11 +491,17 @@ depending on Baritone itself, which would need a separate Java process).
 
 ```text
 !setPathProfile legit
+!setPathProfile cave      # what !enterCave selects automatically
 !listPathProfiles
 !previewPath x y z
 !baritoneStatus
 !mineBlocks iron_ore 8
 ```
+
+Low-level 3D pathfinding (digging, pillar-jumping, 1×1 squeezes) is left to
+these pathfinder profiles rather than bespoke code — `enterCave` swaps the
+`cave` preset in for cave work (remembering the previous profile on the bot
+so it can be reapplied), e.g. `!setPathProfile legit` when back on the surface.
 
 # Navigation Intelligence
 
@@ -921,12 +929,17 @@ surroundings purely from data the server already sends:
 * **Storage scan** — positions of nearby chests, furnaces, hoppers, barrels and
   shulker boxes (locations only; nothing is opened).
 * **Line of sight** — sampled raycast between the bot's eye and a target point.
+* **Danger awareness** — `sensors/danger.js` packages the threat-scored
+  monsters (`autonomy/combat.js`), nearby hazard blocks, autonomy risk level,
+  and underground/darkness flags into `getFullState().danger`, so the LLM sees
+  danger every turn and can reason about threats, not just positions.
 
-This is fed into the AI's context so it can reason about *where* things are,
-not just that they exist, and is exposed as a command:
+This is fed into the AI's context so it can reason about *where* things are —
+and what's dangerous — and is exposed as commands:
 
 ```text
-!radar
+!radar      # full surroundings report
+!threats    # danger digest: risk level, threat score, hazards
 ```
 
 This is observational awareness only. It does not send packets the bot isn't

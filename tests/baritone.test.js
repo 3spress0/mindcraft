@@ -22,7 +22,7 @@ import { GoalBlock, GoalGetToBlock } from '../src/agent/baritone/goals.js';
 // ---------- settings ----------
 
 test('all documented profiles exist and have tweaks', () => {
-    assert.deepEqual(profileNames(), ['default', 'legit', 'fast', 'builder', 'safe']);
+    assert.deepEqual(profileNames(), ['default', 'legit', 'fast', 'builder', 'safe', 'cave']);
     for (const name of PROFILE_NAMES) {
         assert.ok(PROFILES[name].description.length > 0);
         assert.ok(Object.keys(PROFILES[name].tweaks).length > 0);

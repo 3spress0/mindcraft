@@ -186,6 +186,18 @@ export async function enterCave(agent, name, { torch = true } = {}) {
             }
         } catch { steps.push('torch placement skipped'); }
     }
+    // Baritone handles the low-level walking; give it the underground posture
+    // for the approach (hazard-aware, small drops, may clear gravel).
+    try {
+        const { getProfileName, setProfileName } = await import('../baritone/settings.js');
+        const prev = getProfileName(bot);
+        if (prev !== 'cave' && prev !== 'fast') {
+            setProfileName(bot, 'cave');
+            steps.push(`path profile ${prev} -> cave`);
+            bot._cave_prev_profile = prev;
+        }
+    } catch { /* profile switch is a nicety */ }
+
     try {
         await skills.goToPosition(bot, cave.x, cave.y, cave.z, 2);
         steps.push('at the cave mouth');
