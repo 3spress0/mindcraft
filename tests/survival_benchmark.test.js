@@ -26,6 +26,7 @@ const stubExecutors = {
     rest: async () => { CHOICES.last = 'rest'; return CHOICES.last; },
     maintain_base: async (a, need) => { CHOICES.last = 'maintain_base'; return CHOICES.last; },
     patrol: async (a, need, needsCfg) => { CHOICES.last = `patrol:${(needsCfg?.patrol_pois ?? []).length}pois`; return CHOICES.last; },
+    husbandry: async (a, need) => { CHOICES.last = `husbandry:${need.detail}`; return CHOICES.last; },
     explore: async () => { CHOICES.last = 'explore'; return CHOICES.last; }
 };
 
@@ -48,6 +49,10 @@ function makeAgent(spec = {}) {
     const cropBlocks = (spec.matureCrops ?? []).map((c, i) => ({
         name: 'wheat', position: new Vec3(2 + i, 64, 2), getProperty: (k) => (k === 'age' ? 7 : null)
     }));
+    // breedable animals the husbandry scan "sees"
+    (spec.animals ?? []).forEach((a, i) => {
+        hostiles[`animal${i}`] = { name: a.name, position: new Vec3(a.x ?? 5, 64, a.z ?? 0), metadata: { 16: false } };
+    });
     const bot = {
         username: 'SurvivalBot',
         time: { timeOfDay: spec.time ?? 6000 },
@@ -260,6 +265,28 @@ describe('survival benchmark: invariants over many ticks', () => {
         } finally {
             settings.autonomy.needs.patrol_pois = saved;
         }
+    });
+
+    it('breeding food + nearby animals -> husbandry beats idle wandering', async () => {
+        const agent = makeAgent({
+            time: 6000, idleMs: 120000,
+            animals: [{ name: 'cow', x: 5 }, { name: 'cow', x: 6 }],
+            slots: [item('wheat', 9, 4), item('bread', 10, 6)] // fed, wheat is breeding food
+        });
+        const { choice } = await tickOnce(agent);
+        assert.match(choice, /^husbandry:/);
+    });
+
+    it('husbandry is held at night like other outdoor work', async () => {
+        const agent = makeAgent({
+            time: 18000, idleMs: 120000,
+            hostiles: [{ name: 'zombie', x: 6 }, { name: 'skeleton', x: 0, z: 8 }],
+            animals: [{ name: 'cow', x: 5 }, { name: 'cow', x: 6 }],
+            slots: [item('wheat', 9, 4), item('coal', 10, 4), item('stick', 11, 8)]
+        });
+        const { loop } = await tickOnce(agent);
+        assert.equal(loop.lastRisk.level, 'high');
+        assert.ok(agent.ran.every(l => !l.includes('husbandry')), 'no breeding under high risk');
     });
 
     it('patrol is held at night like exploration (risky need)', async () => {

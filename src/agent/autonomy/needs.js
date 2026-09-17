@@ -5,7 +5,7 @@
  * build the snapshot, which keeps this fully testable.
  */
 
-export const NEED_KINDS = ['tool_replace', 'inventory_full', 'restock_food', 'restock_torches', 'farm', 'rest', 'maintain_base', 'patrol', 'explore'];
+export const NEED_KINDS = ['tool_replace', 'inventory_full', 'restock_food', 'restock_torches', 'farm', 'rest', 'maintain_base', 'husbandry', 'patrol', 'explore'];
 
 export function autonomyDefaults() {
     return {
@@ -21,7 +21,9 @@ export function autonomyDefaults() {
         max_harvest: 16,
         max_plants: 24,
         max_till: 4,
-        farm_expand: true
+        farm_expand: true,
+        breed_radius: 16,
+        max_breed_pairs: 2
     };
 }
 
@@ -135,6 +137,22 @@ export function evaluateNeeds(ctx = {}, cfg = {}) {
             advisory: false,
             info: `${ctx.darkSpots} dark spot(s) around home; torches available.`
         });
+    }
+
+    // 4b. Husbandry: breeding food in hand + adult animals nearby -> pair them
+    //     up. Productive outdoor work, so it outranks aimless wandering but is
+    //     a risky need (the risk gate holds it when hostiles are close).
+    if ((ctx.husbandryPairs ?? 0) > 0 && !ctx.isNight && !ctx.hasPendingResume) {
+        const idleMs = ctx.idleForMs ?? 0;
+        if (idleMs >= c.explore_idle_s * 1000) {
+            needs.push({
+                kind: 'husbandry',
+                urgency: 0.34,
+                detail: `breed ${ctx.husbandryPairs} pair(s)`,
+                advisory: false,
+                info: 'Carrying breeding food with adult animals nearby.'
+            });
+        }
     }
 
     // 5. Idle long enough with nothing pending -> go see the world.

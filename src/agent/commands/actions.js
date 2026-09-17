@@ -17,6 +17,7 @@ import { planFetch, executeFetch } from '../storage/fetch.js';
 import { executeTidy } from '../storage/tidying.js';
 import { executeSort } from '../storage/sorting.js';
 import { resolvePatrolStops, executePatrol } from '../autonomy/patrol.js';
+import { planBreeding, executeBreeding } from '../autonomy/husbandry.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -882,6 +883,21 @@ export const actionsList = [
             const poi = noteBedIfNear(agent, { radius: 32 });
             if (!poi) return 'No bed found within 32 blocks.';
             return `Found ${poi.notes ?? 'a bed'} at (${poi.x}, ${poi.y}, ${poi.z}) — noted as respawn anchor.`;
+        }
+    },
+    {
+        name: '!breedAnimals',
+        description: 'Feed breeding food (wheat for cows/sheep, carrot for pigs, seeds for chickens) to nearby adult animals to breed them, e.g. !breedAnimals. Bounded per run.',
+        params: {},
+        perform: async function (agent) {
+            const plans = planBreeding(agent.bot, { radius: 16 });
+            if (!plans.length) return 'No breedable pairs nearby (need 2+ adults of a species and their food).';
+            const summary = plans.map(p => `${p.pairs} ${p.species} pair(s) via ${p.food}`).join('; ');
+            const code = await agent.actions.runAction('action:breedAnimals', async () => {
+                agent._breed_result = await executeBreeding(agent.bot, { radius: 16, maxPairs: Math.min(4, Math.max(...plans.map(p => p.pairs))) });
+            }, {});
+            if (code?.interrupted) return 'Breeding interrupted.';
+            return `Bred ${agent._breed_result ?? 0} pair(s) (${summary}).`;
         }
     },
     {

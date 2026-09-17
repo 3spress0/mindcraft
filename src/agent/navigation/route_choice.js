@@ -70,19 +70,41 @@ export function hazardExposure(waypoints, hazards, { corridor = 4, sampleEvery =
  * @param {object} [opts] { corridor, riskWeight }
  * @returns {{chosen, index, scores}} — scores[i] = length + riskWeight*exposure
  */
-export function chooseSaferRoute(routes, hazards = [], { corridor = 4, riskWeight = 8 } = {}) {
+/**
+ * Score candidate routes by length + hazard exposure and pick one.
+ * With `rng` + `varietyChance`, a near-equivalent alternative is occasionally
+ * preferred instead — same safety class, less robotic repetition.
+ */
+export function chooseSaferRoute(routes, hazards = [], {
+    corridor = 4, riskWeight = 8, rng = null, varietyChance = 0, varietyTolerance = 0.15
+} = {}) {
     const candidates = (routes ?? []).filter(r => Array.isArray(r.waypoints) && r.waypoints.length);
-    if (!candidates.length) return { chosen: null, index: -1, scores: [] };
+    if (!candidates.length) return { chosen: null, index: -1, scores: [], varied: false };
     const scores = candidates.map(r => {
         const len = routeLength(r.waypoints);
         const exposure = hazardExposure(r.waypoints, hazards, { corridor });
-        return Math.round((len + riskWeight * exposure.score) * 10) / 10;
+        // r.penalty lets callers handicap a route (e.g. block-breaking paths)
+        return Math.round((len + riskWeight * exposure.score + (Number(r.penalty) || 0)) * 10) / 10;
     });
     let best = 0;
     for (let i = 1; i < scores.length; i++) {
         if (scores[i] < scores[best]) best = i;
     }
-    return { chosen: candidates[best], index: best, scores };
+    // Humanlike touch: sometimes take a route that is almost as good.
+    let index = best;
+    let varied = false;
+    if (rng && varietyChance > 0 && candidates.length > 1) {
+        const limit = scores[best] * (1 + varietyTolerance) + 1e-9;
+        const near = [];
+        for (let i = 0; i < candidates.length; i++) {
+            if (i !== best && scores[i] <= limit) near.push(i);
+        }
+        if (near.length && rng.chance(varietyChance)) {
+            index = near[Math.floor(rng.range(0, near.length)) % near.length];
+            varied = true;
+        }
+    }
+    return { chosen: candidates[index], index, scores, varied };
 }
 
 /**

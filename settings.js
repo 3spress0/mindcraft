@@ -104,6 +104,7 @@ const settings = {
     // Navigation: hazard-aware movement, route caching, and frontier exploration.
     // See src/agent/navigation/.
     "navigation": {
+        "route_variety": 0.1,       // chance of taking a near-equivalent alternate route (humanlike, hazard-aware profiles)
         "route_cache": {
             "enabled": true,        // remember successful routes and replay them (verified against the world first)
             "ttl_minutes": 15,      // cached routes older than this are ignored
@@ -195,6 +196,8 @@ const settings = {
             "max_plants": 24,               // seeds planted per farming run
             "max_till": 4,                  // new farmland plots tilled per run (base-scale farm growth)
             "farm_expand": true,            // till+plant new plots when seeds remain but farmland runs out
+            "breed_radius": 16,             // blocks to scan for breedable animals
+            "max_breed_pairs": 2,           // animal pairs fed per husbandry run
             "maintain_radius": 8,           // blocks around home scanned for dark spots
             "return_home_after_errand": true, // walk back to home after wandering errands (explore/farm/unload/patrol)
             "patrol_pois": []              // named circuit of mental-map POIs (or "home"); >=2 entries enables patrol need

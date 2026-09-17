@@ -24,6 +24,7 @@ import { getStorageIndex } from './storage/index.js';
 import { createPersonality } from './humanlike/personality.js';
 import { BehaviorStateMachine } from './humanlike/behavior_state.js';
 import { AttentionTracker } from './humanlike/attention.js';
+import { handleSound } from './humanlike/startle.js';
 import { AutonomyLoop } from './autonomy/task_loop.js';
 import { PlayerLedger } from './social/player_ledger.js';
 import { MetricsTracker, causeFromDeathMessage } from './library/metrics.js';
@@ -907,6 +908,11 @@ export class Agent {
                 }
                 noteBedIfNear(this, { radius: 32 });
             } catch { /* respawn bookkeeping must never throw */ }
+        });
+        this.bot.on('soundEffectHeard', (soundName, position) => {
+            // Humanlike startle: flinch and look toward loud sounds
+            // (explosions, lightning, withers...). Never throws.
+            handleSound(this, soundName, position).catch(() => {});
         });
         this.bot.on('kicked', (reason) => {
             if (!this._disconnectHandled) {

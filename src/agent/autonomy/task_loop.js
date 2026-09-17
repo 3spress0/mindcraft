@@ -20,6 +20,7 @@ import { EXECUTORS } from './executors.js';
 import { listTools } from '../library/durability.js';
 import { isEdible } from './unload.js';
 import { farmSnapshot } from './farming.js';
+import { planBreeding } from './husbandry.js';
 import { assessLocalRisk, filterNeedsByRisk, riskLine } from './risk.js';
 import { scanDarkSpots } from './base.js';
 import { executePatrolNeed } from './patrol.js';
@@ -28,7 +29,7 @@ import * as world from '../library/world.js';
 import convoManager from '../conversation.js';
 
 /** Errands after which the bot walks back home (when one is set). */
-export const RETURN_HOME_KINDS = new Set(['explore', 'farm', 'inventory_full', 'patrol']);
+export const RETURN_HOME_KINDS = new Set(['explore', 'farm', 'inventory_full', 'patrol', 'husbandry']);
 
 export function getAutonomyConfig() {
     const block = settings.autonomy ?? {};
@@ -46,6 +47,8 @@ export function getAutonomyConfig() {
         max_plants: block.needs?.max_plants ?? 24,
         max_till: block.needs?.max_till ?? 4,
         farm_expand: block.needs?.farm_expand ?? true,
+        breed_radius: block.needs?.breed_radius ?? 16,
+        max_breed_pairs: block.needs?.max_breed_pairs ?? 2,
         maintain_radius: block.needs?.maintain_radius ?? 8,
         return_home_after_errand: block.needs?.return_home_after_errand ?? true,
         patrol_pois: Array.isArray(block.needs?.patrol_pois) ? block.needs.patrol_pois : []
@@ -80,6 +83,16 @@ export function snapshotNeeds(agent, cfg) {
     if (foodCount < cfg.needs.min_food) {
         try { farm = farmSnapshot(bot, { radius: cfg.needs.farm_radius }); } catch { farm = null; }
     }
+    // Husbandry: only worth scanning animals when breeding food is carried.
+    let husbandryPairs = 0;
+    try {
+        const breedingFood = ['wheat', 'carrot', 'wheat_seeds', 'beetroot_seeds']
+            .some(f => (inventoryCounts[f] ?? 0) >= 2);
+        if (breedingFood) {
+            const plans = planBreeding(bot, { radius: cfg.needs.breed_radius ?? 16 });
+            husbandryPairs = plans.reduce((n, p) => n + p.pairs, 0);
+        }
+    } catch { husbandryPairs = 0; }
     // Bedtime + base-maintenance context (cheap checks, night-gated scan).
     let bedKnown = false;
     try { bedKnown = (agent?.mental_map?.list?.({ type: 'bed' }) ?? []).length > 0 || !!bot?._bed_known; }
@@ -107,7 +120,8 @@ export function snapshotNeeds(agent, cfg) {
         bedKnown,
         homeSet,
         darkSpots,
-        patrolReady
+        patrolReady,
+        husbandryPairs
     };
 }
 

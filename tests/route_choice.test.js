@@ -124,3 +124,63 @@ describe('risk-aware frontier exploration', () => {
         assert.ok(typeof goal.x === 'number' && typeof goal.z === 'number');
     });
 });
+
+describe('route variety and penalties', () => {
+    it('penalty handicaps a route (e.g. block-breaking probe)', () => {
+        // identical geometry: without penalty index 0 wins (first); with a big
+        // penalty on route 0, route 1 wins
+        const r0 = { waypoints: line(0, 0, 10, 0, 10) };
+        const r1 = { waypoints: line(0, 0, 10, 0, 10) };
+        assert.equal(chooseSaferRoute([r0, r1], []).index, 0);
+        const penalized = chooseSaferRoute([{ ...r0, penalty: 50 }, r1], []);
+        assert.equal(penalized.index, 1);
+    });
+
+    it('no rng or zero chance -> never varies', async () => {
+        const { createRng: rngFactory } = await import('../src/agent/humanlike/rng.js');
+        const routes = [
+            { waypoints: line(0, 0, 10, 0, 10) },
+            { waypoints: line(0, 1, 10, 1, 10) } // near-equivalent
+        ];
+        for (let i = 0; i < 10; i++) {
+            const res = chooseSaferRoute(routes, [], { rng: rngFactory(`v${i}`), varietyChance: 0 });
+            assert.equal(res.varied, false);
+            assert.equal(res.index, 0);
+        }
+    });
+
+    it('seeded variety occasionally takes a near-equivalent alternate', async () => {
+        const { createRng: rngFactory } = await import('../src/agent/humanlike/rng.js');
+        const routes = [
+            { waypoints: line(0, 0, 10, 0, 10) },
+            { waypoints: line(0, 1, 10, 1, 10) }
+        ];
+        let varied = 0;
+        const picks = [];
+        for (let i = 0; i < 40; i++) {
+            const res = chooseSaferRoute(routes, [], { rng: rngFactory(`variety-${i}`), varietyChance: 0.35 });
+            picks.push(res.index);
+            if (res.varied) varied++;
+        }
+        assert.ok(varied > 0, 'variety should fire sometimes');
+        assert.ok(varied < 40, '...but not always');
+        // same seed -> same decision (reproducible)
+        const a = chooseSaferRoute(routes, [], { rng: rngFactory('fixed'), varietyChance: 0.35 });
+        const b = chooseSaferRoute(routes, [], { rng: rngFactory('fixed'), varietyChance: 0.35 });
+        assert.equal(a.index, b.index);
+        assert.equal(a.varied, b.varied);
+    });
+
+    it('never varies into a clearly worse route', async () => {
+        const { createRng: rngFactory } = await import('../src/agent/humanlike/rng.js');
+        const routes = [
+            { waypoints: line(0, 0, 10, 0, 10) },        // 10 blocks
+            { waypoints: line(0, 0, 100, 0, 10) }        // 100 blocks
+        ];
+        for (let i = 0; i < 20; i++) {
+            const res = chooseSaferRoute(routes, [], { rng: rngFactory(`worse-${i}`), varietyChance: 0.9 });
+            assert.equal(res.index, 0, 'tolerance must keep bad routes out');
+            assert.equal(res.varied, false);
+        }
+    });
+});

@@ -5,8 +5,10 @@ import Vec3 from 'vec3';
 import settings from "../../../settings.js";
 import { applyProfile, getProfileName, profileAvoidsHazards } from "../baritone/settings.js";
 import * as humanlike from "../humanlike/interaction.js";
-import { hardenMovements } from "../navigation/hazards.js";
+import { hardenMovements, scanHazards } from "../navigation/hazards.js";
 import { RouteCache, routeCacheSettings, snap, downsample, verifyRoute } from "../navigation/route_cache.js";
+import { chooseSaferRoute } from "../navigation/route_choice.js";
+import { createRng } from "../humanlike/rng.js";
 import * as durability from "./durability.js";
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
@@ -1271,20 +1273,32 @@ export async function goToGoal(bot, goal) {
 
     const pathfind_timeout = 1000;
     const ndResult = await bot.pathfinder.getPathTo(nonDestructiveMovements, goal, pathfind_timeout);
-    if (ndResult.status === 'success') {
+    // Hazard-aware profiles probe a second route even when the first succeeds,
+    // so they can pick by safety + variety; other profiles keep the cheap flow.
+    const wantsChoice = profileAvoidsHazards(profile);
+    const dResult = (ndResult.status !== 'success' || wantsChoice)
+        ? await bot.pathfinder.getPathTo(destructiveMovements, goal, pathfind_timeout)
+        : null;
+
+    if (ndResult.status === 'success' && dResult?.status === 'success') {
+        // Two viable routes: choose by hazard exposure, with a personality-paced
+        // touch of variety so the bot doesn't trace one robotic line forever.
+        const takeNonDestructive = pickBetweenRoutes(bot, ndResult.path, dResult.path);
+        final_movements = takeNonDestructive ? nonDestructiveMovements : destructiveMovements;
+        foundPath = takeNonDestructive ? ndResult.path : dResult.path;
+        log(bot, `Chose the ${takeNonDestructive ? 'non-destructive' : 'destructive'} of two viable routes.`);
+    }
+    else if (ndResult.status === 'success') {
         final_movements = nonDestructiveMovements;
         foundPath = ndResult.path;
         log(bot, `Found non-destructive path.`);
     }
+    else if (dResult?.status === 'success') {
+        foundPath = dResult.path;
+        log(bot, `Found destructive path.`);
+    }
     else {
-        const dResult = await bot.pathfinder.getPathTo(destructiveMovements, goal, pathfind_timeout);
-        if (dResult.status === 'success') {
-            foundPath = dResult.path;
-            log(bot, `Found destructive path.`);
-        }
-        else {
-            log(bot, `Path not found, but attempting to navigate anyway using destructive movements.`);
-        }
+        log(bot, `Path not found, but attempting to navigate anyway using destructive movements.`);
     }
 
     const doorCheckInterval = startDoorInterval(bot);
@@ -1326,6 +1340,32 @@ function getRouteCache(bot) {
  * Attempt to walk a cached, still-valid route. Returns true only on full
  * arrival; any hiccup returns false so normal pathfinding takes over.
  */
+/**
+ * Two pathfinder probes succeeded: pick the route with less hazard exposure.
+ * A seeded touch of variety occasionally takes the near-equivalent alternate
+ * so repeat trips don't trace one robotic line. Returns true for the first
+ * (non-destructive) route, false for the second. Never throws.
+ */
+function pickBetweenRoutes(bot, firstPath, secondPath) {
+    try {
+        let hazards = [];
+        try { hazards = scanHazards(bot, { radius: 32 }) ?? []; } catch { hazards = []; }
+        const variety = settings.navigation?.route_variety;
+        bot._route_pick_seq = (bot._route_pick_seq ?? 0) + 1;
+        const rng = createRng(`${bot.username ?? 'bot'}:route:${bot._route_pick_seq}`);
+        const { index } = chooseSaferRoute(
+            // the second probe may break blocks: handicap it so it only wins
+            // when meaningfully safer/shorter (or variety rolls that way)
+            [{ waypoints: firstPath }, { waypoints: secondPath, penalty: 6 }],
+            hazards,
+            { rng, varietyChance: Math.max(0, Math.min(0.5, variety ?? 0.1)) }
+        );
+        return index !== 1;
+    } catch {
+        return true; // the historic default: non-destructive wins
+    }
+}
+
 async function tryReplayCachedRoute(bot, goal, profile, from, to) {
     const cache = getRouteCache(bot);
     if (!cache) return false;

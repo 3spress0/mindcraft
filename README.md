@@ -536,6 +536,17 @@ rest of the cache, so the bot stops burning time on routes that do not work.
 !routeCache clear  # drop the cache
 ```
 
+## Route choice & variety
+
+When two viable routes exist (a careful probe and a may-break-blocks probe),
+hazard-aware profiles don't blindly take the first — `route_choice.js` scores
+each by length **plus hazard exposure** and picks deliberately. The breaking
+route carries a handicap so it only wins when it's meaningfully safer/shorter.
+A seeded touch of **variety** occasionally takes the near-equivalent
+alternate instead, so repeat trips don't trace one robotic line forever —
+bounded by `settings.navigation.route_variety` (default 0.1) and never into a
+clearly worse route.
+
 ## Frontier exploration
 
 `exploration.js` keeps a persisted record of chunks the bot has stood in
@@ -655,6 +666,11 @@ server already provides.
   plants it (`max_till` plots per run, `farm_expand: false` to disable).
   Bounded per run (`max_harvest`/`max_plants`/`farm_radius`) and
   interruptible like every other autonomy action.
+* **Animal husbandry** — the food loop extends to animals: when the bot
+  carries breeding food (wheat for cows/sheep/mooshrooms, carrots for pigs,
+  seeds for chickens) and adult animals are nearby, a `husbandry` need pairs
+  them up — bounded per run (`max_breed_pairs`), daytime-only, risk-gated
+  like other outdoor work. `!breedAnimals` does it on demand.
 * **Named storage spots** — teach the bot where storage lives with
   `!nameStorage tools` standing next to a chest; `!storageSpots` lists them.
   When no chest is within 32 blocks, inventory unloads route to the nearest
@@ -941,7 +957,11 @@ Beyond locomotion, `src/agent/humanlike/` is a deliberate behavior layer where
   was doing, and it is mirrored from the action manager in `agent.js`.
 * **`attention.js`** — line-of-sight-gated sightings (no staring through
   walls), novelty detection, last-seen tracking, sudden-event recording
-  (`entityHurt`, damage), and bounded glances with imprecision.
+  (`entityHurt`, damage, loud sounds), and bounded glances with imprecision.
+* **`startle.js`** — loud sounds (explosions, lightning, withers, ghasts,
+  TNT…) make the bot flinch and look: the event is recorded in attention and
+  the camera glances at the source. It never interrupts the current action —
+  the risk gate handles actual danger.
 * **`interaction.js`** — look-before-you-act focus and bounded, personality-
   scaled pauses for digging, placing, equipping, and opening containers, wired
   into `skills.breakBlockAt/placeBlock/equip`, chest skills, and Baritone-style

@@ -12,6 +12,7 @@ import { executeInventoryUnload } from './unload.js';
 import { executeFarming } from './farming.js';
 import { executeBaseMaintenance } from './base.js';
 import { executePatrolNeed } from './patrol.js';
+import { executeHusbandry } from './husbandry.js';
 
 /** Replace the worn/broken tool named in the need. */
 export async function executeToolReplacement(agent, need, cfg = {}) {
@@ -76,5 +77,6 @@ export const EXECUTORS = {
     farm: executeFarming,
     rest: executeRest,
     maintain_base: executeBaseMaintenance,
-    patrol: executePatrolNeed
+    patrol: executePatrolNeed,
+    husbandry: executeHusbandry
 };

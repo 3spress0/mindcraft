@@ -44,8 +44,8 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Humanlike turning arcs — max turn rate per tick
 * [x] Occasional small aim corrections — jitter + easing gain
 * [x] Avoid perfectly deterministic movement
-* [ ] Avoid robotic path repetition
-* [ ] Natural path choice when multiple routes exist
+* [x] Avoid robotic path repetition — `route_choice.js` seeded variety: hazard-aware profiles occasionally take a near-equivalent alternate instead of tracing one line forever
+* [x] Natural path choice when multiple routes exist — `skills.goToGoal` scores both viable probes by hazard exposure (`chooseSaferRoute`) and picks deliberately
 * [ ] Occasional route reconsideration
 * [ ] Humanlike strafing
 * [ ] Natural jumping decisions
@@ -68,11 +68,11 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Notice mobs — collector entity facts
 * [x] Notice dropped items — item facts + item_collecting mode
 * [x] React to damage — self_preservation + entityHurt
-* [ ] React to explosions
-* [~] React to unexpected events — attention records entityHurt/damage events and the idle gaze turns toward them; no task-level interruption yet
+* [x] React to explosions — `humanlike/startle.js`: loud sounds (explosions, lightning, wither, dragon, ghast, TNT) record an attention event and the camera glances at the source
+* [~] React to unexpected events — attention records entityHurt/damage + loud-sound events and the gaze turns toward them; no task-level interruption yet
 * [~] Retreat when surprised — cowardice is proximity-based, not surprise-based
 * [ ] Hesitate before uncertain actions
-* [ ] Prefer safe routes when appropriate
+* [x] Prefer safe routes when appropriate — hazard-avoiding profiles choose the lower-exposure of two viable routes (handicap keeps block-breaking paths from winning on length alone)
 * [x] Occasional idle wandering — `idle_behavior` mode: hazard-checked `shortWander`, gated by restlessness + idle time
 * [ ] Sit/stand behavior where applicable
 * [x] Natural sleep behavior — `goToBed` skill/nighttime flow
@@ -327,8 +327,8 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Replanting — the farm loop plants carried seeds straight after harvests
 * [x] Farm maintenance — autonomous need: harvest → plant → till new plots near water when farmland runs out (`max_till`, `farm_expand`)
 * [x] Animal detection — radar/entity intel
-* [ ] Animal feeding
-* [ ] Breeding
+* [x] Animal feeding — `autonomy/husbandry.js`: carries breeding food and feeds adult cows/sheep/pigs/chickens/mooshrooms
+* [x] Breeding — autonomy `husbandry` need pairs nearby adults (bounded per run, risk-gated, day-only); `!breedAnimals` on demand
 * [x] Animal harvesting — hunting mode
 * [x] Food production planning — end-to-end base-scale farm loop: harvest, replant, and expand farmland to grow the food reserve without player help
 
@@ -667,6 +667,9 @@ out. Real-LLM scenario runs flow through the same benchmark pipeline with
 call/retry/timeout/cost limits (`scripts/benchmark_llm.js`), and exploration
 and recovery each have their own campaign-level benchmark suites. Spatial
 recall accepts an optional embedding provider (`agent._embedding_provider`)
-to blend vector similarity into keyword search. Remaining frontier: animal
-feeding/breeding at base, nether-side base logistics, and multi-agent
-outpost coordination.
+to blend vector similarity into keyword search. The base now raises animals
+too (`autonomy/husbandry.js`, `!breedAnimals`), hazard-aware navigation picks
+deliberately between viable routes with a seeded touch of variety
+(`navigation/route_choice.js`), and loud sounds startle the bot into looking
+(`humanlike/startle.js`). Remaining frontier: nether-side base logistics,
+multi-agent outpost coordination, and deeper cave navigation.
