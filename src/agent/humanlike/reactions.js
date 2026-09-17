@@ -142,3 +142,73 @@ export function routeReconsiderationDue(rng, { distTraveled = 0, minDist = 24, c
     try { return rng ? rng.chance(chance) : Math.random() < chance; }
     catch { return false; }
 }
+
+/**
+ * Reaction to a player build/block placement near the bot (GO list:
+ * reaction to player actions). Glances at the new block and, with a seeded
+ * chance that scales with personality curiosity, makes a short remark.
+ * Never throws; returns what it did for tests.
+ */
+export async function reactToPlayerBuild(agent, { pos = null, builder = null, curiosity = 0.5, sleep = null } = {}) {
+    const out = { looked: false, remarked: false };
+    try {
+        if (!agent?.bot || !pos) return out;
+        const bot = agent.bot;
+        const me = bot.entity?.position;
+        if (!me) return out;
+        const dist = Math.hypot(pos.x - me.x, pos.z - me.z);
+        if (dist > 24) return out; // too far to care about
+        const { glance } = await import('./attention.js');
+        const personality = agent.personality ?? null;
+        await glance(bot, pos, personality, { holdMs: 400 }).catch(() => {});
+        out.looked = true;
+        const roll = personality?.rng ?? null;
+        const curious = roll ? roll.chance(curiosity * 0.6) : Math.random() < curiosity * 0.6;
+        if (curious && typeof agent.bot.chat === 'function') {
+            const who = builder ? `${builder} is` : 'someone is';
+            const lines = [
+                `looks like ${who} building something over there.`,
+                `ooh, ${who} putting something up near me.`,
+                `nice, ${who} building close by.`
+            ];
+            const idx = roll ? Math.floor(roll.range(0, lines.length)) % lines.length : 0;
+            try { bot.chat(lines[idx]); out.remarked = true; } catch { /* chat optional */ }
+        }
+    } catch { /* reactions must never throw */ }
+    return out;
+}
+
+/**
+ * Reaction to being attacked by a player (GO list: reaction to player
+ * actions). Trusted players get a light protest; untrusted ones get a firm
+ * warning and the bot creates distance. Returns the response taken.
+ */
+export async function reactToPlayerAttack(agent, { attacker = null, trust = false, sleep = null } = {}) {
+    const out = { protested: false, backedOff: false };
+    try {
+        const bot = agent?.bot;
+        if (!bot) return out;
+        const name = attacker?.username ?? attacker?.name ?? 'you';
+        if (trust) {
+            try { bot.chat(`hey, watch it ${name}! that wasn't funny.`); out.protested = true; } catch { /* ok */ }
+            return out;
+        }
+        try { bot.chat(`back off ${name}, I'm warning you.`); out.protested = true; } catch { /* ok */ }
+        // create distance: step away from the attacker
+        const me = bot.entity?.position;
+        const at = attacker?.position ?? attacker?.entity?.position;
+        if (me && at && typeof bot.pathfinder?.goto === 'function') {
+            try {
+                const dx = me.x - at.x, dz = me.z - at.z;
+                const len = Math.hypot(dx, dz) || 1;
+                const away = { x: me.x + (dx / len) * 8, y: me.y, z: me.z + (dz / len) * 8 };
+                const { GoalBlock } = await import('mineflayer-pathfinder').catch(() => ({ GoalBlock: null }));
+                if (GoalBlock) {
+                    bot.pathfinder.goto(new GoalBlock(Math.round(away.x), Math.round(away.y), Math.round(away.z)));
+                    out.backedOff = true;
+                }
+            } catch { /* backing off is best-effort */ }
+        }
+    } catch { /* reactions must never throw */ }
+    return out;
+}

@@ -327,6 +327,31 @@ export class PlanRunner {
             `\nRECOVERY FROM PREVIOUS FAILURE (${step.lastRecovery.reason}):\n${step.lastRecovery.guidance}` :
             (step.attempts > 1 && step.criticNote ?
                 `\nYour previous attempt did NOT verify: ${step.criticNote}. Change your approach.` : '');
+        // Self-check before action + explicit uncertainty (GO list): scan
+        // preconditions against the real inventory and tell the executor
+        // exactly what we are unsure about, instead of guessing silently.
+        let selfCheckHint = '';
+        try {
+            const { preActionCheck } = await import('./analysis.js');
+            let counts = {};
+            try {
+                const world = await import('../library/world.js');
+                counts = world.getInventoryCounts(this.agent.bot);
+            } catch { /* counts optional */ }
+            const check = preActionCheck(step, {
+                inventoryCounts: counts,
+                isNight: (this.agent.bot?.time?.timeOfDay ?? 6000) > 13000,
+                botHealthy: (this.agent.bot?.health ?? 20) > 4
+            });
+            if (check.warnings.length) {
+                selfCheckHint = `\nBEFORE YOU START — self-check flagged: ${check.warnings.join('; ')}. ` +
+                    'State any uncertainty explicitly and adapt if something is missing.';
+                try {
+                    const { logEvent } = await import('../library/structlog.js');
+                    logEvent(this.agent, 'planning', 'pre_action_check', { step: step.title, warnings: check.warnings });
+                } catch { /* logging advisory */ }
+            }
+        } catch { /* self-check is advisory */ }
 
         const message = [
             `You are executing step ${progress.done + 1} of ${progress.total} of a planned project.`,
@@ -337,6 +362,7 @@ export class PlanRunner {
             `This step is verified complete when: ${expectedText}`,
             deltaText ? `Additionally, this exact state change must occur: ${deltaText}.` : null,
             recoveryHint,
+            selfCheckHint || null,
             '',
             'Work on ONLY this step now, using whichever commands or tools you need. As soon as the step is',
             'verifiably done (or you are blocked and cannot proceed), stop and report.',

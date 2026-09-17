@@ -223,6 +223,13 @@ export async function mineBlocks(bot, blockType, count = 1, opts = {}) {
         if (here) bot._mine_entrance = { x: Math.round(here.x), y: Math.round(here.y), z: Math.round(here.z) };
     } catch { /* optional */ }
     const types = Array.isArray(opts.types) && opts.types.length ? opts.types.map(String) : [String(blockType)];
+    // Resume awareness: note when this run continues an interrupted one.
+    let resumed = false;
+    try {
+        const { loadMineInterrupt } = await import('./mine_state.js');
+        const prev = loadMineInterrupt(bot.username ?? bot._autonomy?.agent?.name ?? 'bot');
+        resumed = !!prev?.types?.some(t => types.includes(t));
+    } catch { /* advisory */ }
 
     while (mined < count) {
         if (bot.interrupt_code) {
@@ -342,5 +349,23 @@ export async function mineBlocks(bot, blockType, count = 1, opts = {}) {
         } catch { /* returning is best-effort */ }
     }
 
-    return { mined, requested: count, reason, unsafeSkipped: skippedUnsafe.size };
+    // Mining interruption recovery (GO list): persist what's left so the
+    // next run resumes instead of starting blind; clear on completion.
+    try {
+        const { recordMineInterrupt, clearMineInterrupt, loadMineInterrupt } = await import('./mine_state.js');
+        const botName = bot.username ?? bot._autonomy?.agent?.name ?? 'bot';
+        if (reason === 'completed') {
+            clearMineInterrupt(botName);
+        } else {
+            const was = loadMineInterrupt(botName) ?? {};
+            recordMineInterrupt(botName, {
+                types,
+                remaining: Math.max(0, count - mined),
+                entrance: bot._mine_entrance ?? was.entrance ?? null,
+                reason
+            });
+        }
+    } catch { /* interrupt bookkeeping is advisory */ }
+
+    return { mined, requested: count, reason, unsafeSkipped: skippedUnsafe.size, resumed };
 }

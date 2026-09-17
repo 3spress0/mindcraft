@@ -6,6 +6,7 @@
  */
 
 import * as durability from '../library/durability.js';
+import * as world from '../library/world.js';
 import { explore } from '../navigation/exploration.js';
 import { autonomyDefaults } from './needs.js';
 import { executeInventoryUnload } from './unload.js';
@@ -86,5 +87,38 @@ export const EXECUTORS = {
     rest: executeRest,
     maintain_base: executeBaseMaintenance,
     patrol: executePatrolNeed,
-    husbandry: executeHusbandry
+    husbandry: executeHusbandry,
+    gather_resource: executeGatherResource
 };
+
+/**
+ * Self-initiated resource gathering (GO list: autonomous resource
+ * gathering). When staple materials run low the bot tops itself up without
+ * being asked — collect the nearest logs it can find, bounded per run.
+ */
+async function executeGatherResource(agent, need, cfg = {}) {
+    const bot = agent?.bot;
+    if (!bot) return 'gather: no bot';
+    const target = need?.detail ?? 'log';
+    const num = Math.min(Math.max(1, cfg.gather_batch ?? 8), 32);
+    const skills = await import('../library/skills.js');
+    if (target === 'log') {
+        const types = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log',
+            'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log'];
+        for (const t of types) {
+            try {
+                const block = await world.getNearestBlock(bot, t, 64);
+                if (!block) continue;
+                const ok = await skills.collectBlock(bot, t, num);
+                return ok ? `gather: collected ${num} ${t}` : `gather: could not finish ${t}`;
+            } catch { /* try next type */ }
+        }
+        return 'gather: no trees found nearby';
+    }
+    try {
+        const ok = await skills.collectBlock(bot, target, num);
+        return ok ? `gather: collected ${num} ${target}` : `gather: could not collect ${target}`;
+    } catch (e) {
+        return `gather failed: ${e.message}`;
+    }
+}

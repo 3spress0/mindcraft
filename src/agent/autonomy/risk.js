@@ -24,7 +24,7 @@ export const HOSTILE_MOBS = [
 ];
 
 /** Needs that expose the bot to the world and should wait out danger. */
-export const RISKY_NEEDS = new Set(['explore', 'farm', 'rest', 'patrol', 'husbandry']);
+export const RISKY_NEEDS = new Set(['explore', 'farm', 'rest', 'patrol', 'husbandry', 'gather_resource']);
 
 /** Posture multipliers: how much risk a posture tolerates. */
 const POSTURE_SENSITIVITY = { cautious: 1.35, balanced: 1.0, bold: 0.65 };

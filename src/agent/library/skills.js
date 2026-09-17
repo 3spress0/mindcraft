@@ -106,7 +106,7 @@ export async function craftRecipe(bot, itemName, num=1) {
     num = Math.max(1, Math.floor(Number(num) || 1));
     let placedTable = false;
 
-    if (mc.getItemCraftingRecipes(itemName).length == 0) {
+    if ((mc.getItemCraftingRecipes(itemName)?.length ?? 0) == 0) {
         log(bot, `${itemName} is either not an item, or it does not have a crafting recipe!`);
         return false;
     }
@@ -211,7 +211,9 @@ export async function craftRecipe(bot, itemName, num=1) {
     }
 
     await cleanupCraftingTableAndArmor(bot, placedTable);
-    return true;
+    // Verification gates the result: a craft that didn't deliver the goods
+    // reports failure even though bot.craft() ran.
+    return verified;
 }
 
 function getRecipeOutputCount(recipe) {
@@ -1135,6 +1137,13 @@ export async function clearArea(bot, a, b, { cap = 256 } = {}) {
                 try {
                     await breakBlockAt(bot, x, y, z);
                     cleared++;
+                    // Temporary-block management (GO list): remember what we
+                    // removed so terrain prep can be undone later.
+                    try {
+                        const agent = bot._autonomy?.agent ?? null;
+                        const { getBuildLedger } = await import('../npc/build_ledger.js');
+                        getBuildLedger(agent)?.registerTempBlock?.({ x, y, z }, block.name);
+                    } catch { /* ledger advisory */ }
                 } catch {
                     skipped++;
                     if (skipped > 16) { reason = 'too many blocks refused'; break outer; }
@@ -1684,6 +1693,56 @@ export async function goToPosition(bot, x, y, z, min_distance=2) {
     } catch (err) {
         log(bot, `Pathfinding stopped: ${err.message}.`);
         clearInterval(progressInterval);
+        return false;
+    }
+}
+
+/**
+ * Sit down on the nearest sittable block (stairs or slab) within range.
+ * Vanilla sitting = sneak-shift onto the edge of a stair/slab seat.
+ * (GO list: sit/stand behavior where applicable.)
+ * @returns {Promise<boolean>} true if the bot is now sitting
+ */
+export async function sitDown(bot, { range = 8 } = {}) {
+    try {
+        if (bot._sitting) { log(bot, `Already sitting.`); return true; }
+        const sittable = (b) => b && (b.name.endsWith('_stairs') || b.name.endsWith('_slab'));
+        const found = typeof bot.findBlocks === 'function'
+            ? bot.findBlocks({ matching: sittable, maxDistance: range, count: 4 }) : [];
+        if (!found?.length) { log(bot, `No stairs or slabs nearby to sit on.`); return false; }
+        const p = found[0];
+        const ok = await goToPosition(bot, p.x, p.y, p.z, 0.6);
+        if (!ok) { log(bot, `Couldn't reach a seat.`); return false; }
+        // the sit: sneak toward the seat edge, then settle
+        try {
+            bot.setControlState('sneak', true);
+            bot.setControlState('forward', true);
+            await new Promise(r => setTimeout(r, 350));
+            bot.setControlState('forward', false);
+            await new Promise(r => setTimeout(r, 150));
+        } catch { /* control state optional */ }
+        bot._sitting = true;
+        log(bot, `Sitting down here for a bit.`);
+        return true;
+    } catch (err) {
+        log(bot, `Couldn't sit down: ${err.message}`);
+        return false;
+    }
+}
+
+/**
+ * Stand back up (release sneak) after sitting. Safe to call anytime.
+ * @returns {Promise<boolean>}
+ */
+export async function standUp(bot) {
+    try {
+        try { bot.setControlState('sneak', false); } catch { /* optional */ }
+        const was = !!bot._sitting;
+        bot._sitting = false;
+        if (was) log(bot, `Standing back up.`);
+        return true;
+    } catch (err) {
+        log(bot, `Couldn't stand up: ${err.message}`);
         return false;
     }
 }

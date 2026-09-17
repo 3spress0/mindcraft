@@ -89,6 +89,7 @@ export async function buildSchematic(agent, name, position = null, orientation =
         logEvent(agent, 'building', 'build_start', { name: entry.key, blocks: goal?.blocks?.length ?? null });
     } catch { /* logging advisory */ }
 
+
     if (orientation === null || orientation === undefined) {
         const prev = agent.npc.data.built[entry.key];
         orientation = prev ? prev.orientation : Math.floor(Math.random() * 4);
@@ -109,6 +110,11 @@ export async function buildSchematic(agent, name, position = null, orientation =
 
     // Persist before the first pass so interruptions/gathering trips resume here.
     agent.npc.data.built[entry.key] = { name: entry.key, position, orientation };
+    // Build ledger: cancellation bookkeeping + rollback candidate tracking.
+    try {
+        const { getBuildLedger } = await import('./build_ledger.js');
+        getBuildLedger(agent)?.startBuild?.(entry.key, position);
+    } catch { /* ledger advisory */ }
 
     // Snapshot expected structure for damage detection
     try {
@@ -152,6 +158,10 @@ export async function buildSchematic(agent, name, position = null, orientation =
         }
         if (!res.acted) {
             const after = scanProgress(agent.bot, goal, position, orientation);
+            try {
+                const { getBuildLedger } = await import('./build_ledger.js');
+                getBuildLedger(agent)?.finishBuild?.(entry.key, { completed: true });
+            } catch { /* ledger advisory */ }
             return {
                 status: 'complete',
                 message: `Finished building ${entry.key} (${after.satisfied}/${after.wanted} blocks).` +

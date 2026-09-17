@@ -204,6 +204,17 @@ export class Agent {
             this.autonomy = null;
         }
 
+        // Humanlike locomotion texture (GO list: natural accel/decel,
+        // strafing, sprint gating near obstacles, swim/climb pacing):
+        // configures pathfinder + control state, never reimplements pathing.
+        try {
+            const { attachLocomotion } = await import('./humanlike/locomotion.js');
+            this._locomotion = attachLocomotion(this.bot, {
+                rng: this.personality?.rng ?? null,
+                personality: this.personality ?? null
+            });
+        } catch (e) { /* locomotion layer is advisory */ }
+
         // Social memory: persistent ledger of known players + reaction gating.
         try {
             this.player_ledger = new PlayerLedger({ botName: this.name || 'bot' }).load();
@@ -921,9 +932,58 @@ export class Agent {
             if (this.bot.health < prev_health) {
                 this.bot.lastDamageTime = Date.now();
                 this.bot.lastDamageTaken = prev_health - this.bot.health;
+                // Surprise marker (GO list): getting hit is the strongest
+                // unexpected event — the autonomy loop re-evaluates.
+                try {
+                    this._surprise_at = Date.now();
+                    this._surprise_reason = 'took damage';
+                } catch { /* optional */ }
+                // Reaction to player attacks (GO list): if a player is right
+                // on top of us, respond in character — protest when trusted,
+                // warn + back off when not. Advisory, debounced.
+                try {
+                    const now = Date.now();
+                    if (now - (this._last_attack_react ?? 0) > 8000) {
+                        this._last_attack_react = now;
+                        const me = this.bot.entity?.position;
+                        const attacker = Object.values(this.bot.entities ?? {}).find(e =>
+                            e?.type === 'player' && e !== this.bot.entity && me && e.position &&
+                            e.position.distanceTo(me) < 5);
+                        if (attacker) {
+                            import('./humanlike/reactions.js').then(({ reactToPlayerAttack }) => {
+                                const trusted = this.player_ledger?.get?.(attacker.username)?.trust === 'friend';
+                                return reactToPlayerAttack(this, { attacker, trust: trusted });
+                            }).catch(() => {});
+                        }
+                    }
+                } catch { /* reactions must never break health handling */ }
             }
             prev_health = this.bot.health;
         });
+        // Reaction to player builds (GO list): a block appearing near a
+        // player is someone building — glance at it, occasionally remark.
+        try {
+            this.bot.on('blockUpdate', (oldBlock, newBlock) => {
+                try {
+                    if (!oldBlock || !newBlock || oldBlock.name === newBlock.name) return;
+                    if (newBlock.name === 'air' || newBlock.name === 'cave_air') return;
+                    const pos = newBlock.position;
+                    const me = this.bot.entity?.position;
+                    if (!pos || !me || pos.distanceTo(me) > 16) return;
+                    // only react when a player is close enough to be the builder
+                    const builder = Object.values(this.bot.entities ?? {}).find(e =>
+                        e?.type === 'player' && e !== this.bot.entity && e.position &&
+                        e.position.distanceTo(pos) < 8);
+                    if (!builder) return;
+                    const now = Date.now();
+                    if (now - (this._last_build_react ?? 0) < 12000) return;
+                    this._last_build_react = now;
+                    this.attention?.recordEvent?.(pos.x, pos.y, pos.z, 'player_build');
+                    import('./humanlike/reactions.js').then(({ reactToPlayerBuild }) =>
+                        reactToPlayerBuild(this, { pos, builder: builder.username })).catch(() => {});
+                } catch { /* reactions must never break block handling */ }
+            });
+        } catch { /* event optional */ }
         // Logging callbacks
         this.bot.on('error' , (err) => {
             console.error('Error event!', err);
@@ -940,7 +1000,10 @@ export class Agent {
             this.actions.cancelResume();
             this.actions.stop();
             try {
-                this.metrics?.recordDeath({ pos: this.bot.entity?.position });
+                this.metrics?.recordDeath({
+                    pos: this.bot.entity?.position,
+                    inventory: this._last_inventory_snapshot ?? null
+                });
             } catch { /* metrics must never break death handling */ }
         });
         this.bot.on('respawn', () => {
@@ -960,6 +1023,19 @@ export class Agent {
                 }
                 this._lastDimension = dim;
                 noteBedIfNear(this, { radius: 32 });
+                // Item recovery after death (GO list): if the last death
+                // recorded a position and what we were carrying, nudge the
+                // LLM to consider a recovery run — items despawn in ~5 min.
+                try {
+                    const d = this.metrics?.lastDeath;
+                    if (d && d.x != null && Array.isArray(d.inventory) && d.inventory.length > 0) {
+                        this.history?.add?.('system',
+                            `You just respawned after dying at (${d.x}, ${d.y}, ${d.z}). ` +
+                            `Your dropped items included: ${d.inventory.slice(0, 6).join(', ')}. ` +
+                            `They despawn in about 5 minutes — consider going back for them if they are worth it.`);
+                        d._recoveryNotified = true;
+                    }
+                } catch { /* recovery nudge is advisory */ }
             } catch { /* respawn bookkeeping must never throw */ }
         });
         this.bot.on('soundEffectHeard', (soundName, position) => {
@@ -1045,11 +1121,29 @@ export class Agent {
      * Movement metrics (GO list): accumulate blocks walked (throttled) and
      * flush dirty counters occasionally. Cheap, never throws.
      */
-    trackMovement() {
+    async trackMovement() {
         try {
             const now = Date.now();
             if (now - (this._last_move_tick ?? 0) < 1000) return;
             this._last_move_tick = now;
+            // Suffocation detection (GO list): buried head -> stop pathing
+            // and push upward until clear. Complements unstuck mode.
+            try {
+                if (now - (this._last_suffocation_check ?? 0) > 2000) {
+                    this._last_suffocation_check = now;
+                    const { suffocationState } = await import('./sensors/awareness.js');
+                    const s = suffocationState(this.bot);
+                    if (s.suffocating && !this._suffocating) {
+                        this._suffocating = true;
+                        try { this.bot.pathfinder?.stop?.(); } catch { /* optional */ }
+                        try { this.bot.setControlState?.('jump', true); } catch { /* optional */ }
+                        this.attention?.recordEvent?.(this.bot.entity?.position?.x ?? 0, (this.bot.entity?.position?.y ?? 0) + 1, this.bot.entity?.position?.z ?? 0, 'suffocating');
+                        setTimeout(() => { try { this.bot?.setControlState?.('jump', false); } catch { /* ok */ } }, 900);
+                    } else if (!s.suffocating && this._suffocating) {
+                        this._suffocating = false;
+                    }
+                }
+            } catch { /* suffocation handling is advisory */ }
             const pos = this.bot?.entity?.position;
             if (pos && this._last_move_pos) {
                 const d = Math.hypot(pos.x - this._last_move_pos.x, pos.z - this._last_move_pos.z);
@@ -1059,6 +1153,19 @@ export class Agent {
             }
             this._last_move_pos = pos ? { x: pos.x, z: pos.z } : null;
             getMetrics(this)?.flushIfDirty?.();
+            // Item recovery after death (GO list): keep a rolling snapshot of
+            // what we carry so a death can record what dropped. Throttled by
+            // the 1s tick above; never throws.
+            if (now - (this._last_inv_snap_at ?? 0) > 5000) {
+                this._last_inv_snap_at = now;
+                try {
+                    const counts = {};
+                    for (const slot of this.bot?.inventory?.slots ?? []) {
+                        if (slot && slot.name) counts[slot.name] = (counts[slot.name] ?? 0) + (slot.count ?? 1);
+                    }
+                    if (Object.keys(counts).length > 0) this._last_inventory_snapshot = counts;
+                } catch { /* snapshot is advisory */ }
+            }
         } catch { /* metrics are advisory */ }
     }
 

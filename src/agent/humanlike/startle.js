@@ -39,6 +39,13 @@ export async function handleSound(agent, soundName, position, { maxDist = 48 } =
 
     try { agent?._attention?.recordEvent?.(position.x, position.y, position.z, 'sound'); } catch { /* optional */ }
 
+    // Task-level interruption marker (GO list: react to unexpected events):
+    // the autonomy loop reads this and re-evaluates instead of plowing on.
+    try {
+        agent._surprise_at = Date.now();
+        agent._surprise_reason = String(soundName).slice(0, 64);
+    } catch { /* optional */ }
+
     try {
         await glance(bot, position, agent?.personality, { minDwellMs: 200, maxDwellMs: 900 });
     } catch { /* glancing is best-effort */ }

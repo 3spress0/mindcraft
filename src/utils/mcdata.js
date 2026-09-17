@@ -14,6 +14,18 @@ let mcdata = null;
 let Item = null;
 
 /**
+ * Offline initialization for a pinned version (tests/scripts; idempotent).
+ * Real bots still initialize themselves from the 'login' event.
+ */
+export function initForVersion(version) {
+    if (mcdata && mc_version === version) return mcdata;
+    mc_version = version;
+    mcdata = minecraftData(version);
+    try { Item = prismarine_items(version); } catch { /* items optional */ }
+    return mcdata;
+}
+
+/**
  * @typedef {string} ItemName
  * @typedef {string} BlockName
 */

@@ -198,6 +198,18 @@ export async function enterCave(agent, name, { torch = true } = {}) {
         }
     } catch { /* profile switch is a nicety */ }
 
+    // Entrance breadcrumb (GO list): remember where we came from so
+    // !leaveCave can bring the bot back out again.
+    try {
+        const here = bot.entity?.position;
+        bot._cave_entrance = {
+            name: cave.name,
+            mouth: { x: Math.round(cave.x), y: Math.round(cave.y), z: Math.round(cave.z) },
+            from: here ? { x: Math.round(here.x), y: Math.round(here.y), z: Math.round(here.z) } : null,
+            enteredAt: Date.now()
+        };
+    } catch { /* breadcrumb optional */ }
+
     try {
         await skills.goToPosition(bot, cave.x, cave.y, cave.z, 2);
         steps.push('at the cave mouth');
@@ -205,4 +217,32 @@ export async function enterCave(agent, name, { torch = true } = {}) {
         return `cave: could not reach "${cave.name}" right now`;
     }
     return `cave: entered "${cave.name}" — ${steps.join(', ')}`;
+}
+
+/**
+ * Leave the cave (GO list: cave navigation): restore the surface path
+ * profile and walk back to the point we entered from. Bounded, honest.
+ */
+export async function leaveCave(agent) {
+    const bot = agent?.bot;
+    if (!bot) return 'cave: no bot';
+    const rec = bot._cave_entrance;
+    if (!rec) return 'cave: I did not record entering a cave this session.';
+    try {
+        const { getProfileName, setProfileName } = await import('../baritone/settings.js');
+        if (getProfileName(bot) === 'cave' && bot._cave_prev_profile) {
+            setProfileName(bot, bot._cave_prev_profile);
+        }
+    } catch { /* profile restore optional */ }
+    const target = rec.from ?? rec.mouth;
+    try {
+        const skills = await import('../library/skills.js');
+        const ok = await skills.goToPosition(bot, target.x, target.y, target.z, 3);
+        if (ok) bot._cave_entrance = null;
+        return ok
+            ? `cave: back outside "${rec.name}" — returned to where I entered.`
+            : `cave: I know the way out (${target.x}, ${target.y}, ${target.z}) but could not reach it right now.`;
+    } catch (e) {
+        return `cave: leaving failed (${e.message})`;
+    }
 }

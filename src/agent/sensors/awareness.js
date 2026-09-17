@@ -181,3 +181,93 @@ export function soundReport(bot, { windowMs = 15000 } = {}) {
 import('./radar.js').then(({ _setVisibilityFn }) => {
     try { _setVisibilityFn?.(visibilityScore); } catch { /* optional */ }
 }).catch(() => {});
+
+/**
+ * Suffocation detection (GO list): the bot's head/eyes block is filled by a
+ * solid non-air block (sand collapse, gravel, piston, buried by a build).
+ * Pure read of server state — safe to call every tick.
+ * @returns {{suffocating:boolean, block:string|null}}
+ */
+export function suffocationState(bot) {
+    try {
+        const pos = bot?.entity?.position;
+        if (!pos) return { suffocating: false, block: null };
+        for (const dy of [1, 2]) {
+            const b = bot.blockAt?.({ x: pos.x, y: Math.floor(pos.y) + dy, z: pos.z }, false);
+            if (b && b.name !== 'air' && b.name !== 'water' && b.name !== 'lava'
+                && b.boundingBox !== 'empty') {
+                return { suffocating: true, block: b.name };
+            }
+        }
+    } catch { /* awareness must never throw */ }
+    return { suffocating: false, block: null };
+}
+
+/**
+ * Persistent block knowledge (GO list): remember noteworthy blocks the bot
+ * can actually see — ores, stations, beds, chests — as world-model facts with
+ * a TTL so stale entries prune themselves. Never throws.
+ * @returns {number} facts recorded
+ */
+export function rememberNotableBlocks(agent, { radius = 24, max = 8 } = {}) {
+    const bot = agent?.bot;
+    if (!bot?.entity?.position || !agent?.world_model) return 0;
+    let recorded = 0;
+    try {
+        const { findBlocks } = bot;
+        const center = bot.entity.position;
+        const oreNames = ['coal_ore', 'iron_ore', 'copper_ore', 'gold_ore', 'redstone_ore',
+            'lapis_ore', 'diamond_ore', 'emerald_ore', 'deepslate_coal_ore', 'deepslate_iron_ore',
+            'deepslate_copper_ore', 'deepslate_gold_ore', 'deepslate_redstone_ore',
+            'deepslate_lapis_ore', 'deepslate_diamond_ore', 'deepslate_emerald_ore',
+            'ancient_debris', 'nether_gold_ore', 'nether_quartz_ore'];
+        const stationNames = ['crafting_table', 'furnace', 'blast_furnace', 'smoker',
+            'enchanting_table', 'anvil', 'brewing_stand', 'smithing_table',
+            'stonecutter', 'cartography_table', 'loom', 'grindstone', 'chest', 'bed'];
+        const wanted = [...oreNames, ...stationNames];
+        const found = typeof findBlocks === 'function'
+            ? findBlocks({ matching: (b) => wanted.includes(b.name), maxDistance: radius, count: max * 2 })
+            : [];
+        for (const p of found.slice(0, max)) {
+            try {
+                const b = bot.blockAt?.(p, false);
+                if (!b) continue;
+                const kind = oreNames.includes(b.name) ? 'ore' : 'station';
+                agent.world_model.record('world', {
+                    name: b.name,
+                    kind,
+                    pos: { x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.z) },
+                    detail: `${kind} spotted near (${Math.round(center.x)}, ${Math.round(center.z)})`
+                }, { expiresIn: 14 * 24 * 3600 * 1000 });
+                recorded++;
+            } catch { /* per-block advisory */ }
+        }
+    } catch { /* never throw */ }
+    return recorded;
+}
+
+/**
+ * Entity-vanish awareness (GO list): track entities we were watching and
+ * notice when they disappear without a visible cause (player logout, chunk
+ * unload, despawn). Returns the entries that vanished since last call.
+ */
+export function trackVanishedEntities(bot, watched, { maxDist = 48 } = {}) {
+    if (!bot?.entity?.position || !Array.isArray(watched) || watched.length === 0) return [];
+    const vanished = [];
+    try {
+        const me = bot.entity.position;
+        const alive = new Set();
+        for (const e of Object.values(bot.entities ?? {})) {
+            if (e && e.uuid != null) alive.add(e.uuid);
+            else if (e && e.id != null) alive.add(e.id);
+        }
+        for (const w of watched) {
+            if (!w || w.id == null) continue;
+            if (alive.has(w.id) || alive.has(w.uuid)) continue;
+            const dist = w.position
+                ? Math.hypot(w.position.x - me.x, w.position.z - me.z) : 0;
+            if (dist <= maxDist) vanished.push({ id: w.id, name: w.name ?? 'entity', position: w.position ?? null });
+        }
+    } catch { /* never throw */ }
+    return vanished;
+}

@@ -166,3 +166,103 @@ export function summarizeProject(project) {
     if (gaps.length) parts.push(`Watch out for missing: ${gaps.slice(0, 3).map(g => g.item).join(', ')}.`);
     return parts.join(' ');
 }
+
+/**
+ * Formal precondition model (GO list: preconditions). A step's preconditions
+ * are the items it mentions needing (from the shared vocab) plus any explicit
+ * `requires` array. Each precondition resolves to satisfied / missing.
+ * @param {object} step
+ * @param {object} inventoryCounts - { itemName: count }
+ * @returns {Array<{item, need, have, ok}>}
+ */
+export function stepPreconditions(step, inventoryCounts = {}) {
+    const counts = inventoryCounts ?? {};
+    const wanted = new Map();
+    for (const req of step?.requires ?? []) {
+        if (req && typeof req === 'string') wanted.set(req.toLowerCase(), 1);
+        else if (req && typeof req === 'object' && req.item) wanted.set(String(req.item).toLowerCase(), Number(req.count ?? 1));
+    }
+    const text = `${step?.title ?? ''} ${step?.instruction ?? ''}`.toLowerCase();
+    for (const token of text.split(/[^a-z0-9_]+/)) {
+        if (token.length >= 3 && COMMON_ITEMS.includes(token) && !wanted.has(token)) wanted.set(token, 1);
+    }
+    return [...wanted.entries()].map(([item, need]) => ({
+        item,
+        need,
+        have: counts[item] ?? 0,
+        ok: (counts[item] ?? 0) >= need
+    }));
+}
+
+/**
+ * Check all remaining steps' preconditions against the current inventory.
+ * (GO list: preconditions / self-check before actions.)
+ * @returns {{ok:boolean, missing:Array<{step, item}>}}
+ */
+export function checkPreconditions(project, inventoryCounts = {}) {
+    const missing = [];
+    for (const step of project?.steps ?? []) {
+        try {
+            if (step.status === STEP.DONE || step.status === STEP.FAILED) continue;
+            for (const pre of stepPreconditions(step, inventoryCounts)) {
+                if (!pre.ok) missing.push({ step: step.title, item: pre.item });
+            }
+        } catch { /* per-step advisory */ }
+    }
+    return { ok: missing.length === 0, missing };
+}
+
+/**
+ * Action confidence + uncertainty handling (GO list: action confidence,
+ * uncertainty handling, explicit uncertainty). Before executing a step we
+ * produce a bounded confidence plus the concrete reasons for doubt, so the
+ * runner (and the LLM) can say *why* they are unsure instead of guessing.
+ * @param {object} step
+ * @param {object} ctx - { inventoryCounts, isNight, riskLevel }
+ * @returns {{confidence:number, uncertain:Array<string>}}
+ */
+export function actionConfidence(step, ctx = {}) {
+    const uncertain = [];
+    let c = 0.9;
+    try {
+        c = stepConfidence(step);
+        const pres = stepPreconditions(step, ctx.inventoryCounts ?? {});
+        for (const pre of pres) {
+            if (!pre.ok) {
+                c -= 0.15;
+                uncertain.push(`missing ${pre.item}`);
+            }
+        }
+        if ((step?.attempts ?? 0) >= 2) {
+            c -= 0.1;
+            uncertain.push(`already attempted ${step.attempts} times`);
+        }
+        if (ctx.riskLevel === 'high') {
+            c -= 0.1;
+            uncertain.push('local risk is high');
+        }
+        if (ctx.isNight && /build|place|construct/i.test(`${step?.title ?? ''}`)) {
+            c -= 0.05;
+            uncertain.push('building in the dark');
+        }
+    } catch { /* confidence must never throw */ }
+    return { confidence: Math.round(Math.max(0.05, Math.min(1, c)) * 100) / 100, uncertain };
+}
+
+/**
+ * Per-action self-check (GO list: self-check before actions). A tiny guard
+ * the runner can call right before executing: returns warnings the actor
+ * should surface instead of silently plowing ahead. Never throws.
+ * @param {object} step
+ * @param {object} ctx - { inventoryCounts, isNight, riskLevel, botHealthy }
+ * @returns {{go:boolean, warnings:Array<string>}}
+ */
+export function preActionCheck(step, ctx = {}) {
+    const warnings = [];
+    try {
+        const { confidence, uncertain } = actionConfidence(step, ctx);
+        warnings.push(...uncertain);
+        if (ctx.botHealthy === false) warnings.push('bot is not healthy');
+        return { go: confidence >= 0.45 && ctx.botHealthy !== false, warnings };
+    } catch { return { go: true, warnings }; }
+}

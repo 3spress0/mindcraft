@@ -26,7 +26,7 @@ import { getReservations } from '../storage/reservations.js';
 import { previewPath } from '../baritone/baritone.js';
 import { GoalNear } from '../baritone/goals.js';
 import { asciiMap } from '../sensors/mapview.js';
-import { enterCave } from '../navigation/caves.js';
+import { enterCave, leaveCave } from '../navigation/caves.js';
 import { executePortalTrip } from '../navigation/portals.js';
 import { decideEscape, executeEscape } from '../autonomy/combat.js';
 
@@ -354,6 +354,57 @@ export const actionsList = [
             const result = await buildSchematic(agent, name, position, orient);
             if (result.status === 'error') throw new Error(result.message);
             return result.message;
+        })
+    },
+    {
+        name: '!cancelBuild',
+        description: 'Cancel the active build with a reason and record it in the build ledger (dedicated cancellation bookkeeping). Does not automatically undo placed blocks — use !undoBuild for that.',
+        params: {
+            'reason': { type: 'string', description: 'Why the build is being cancelled.' }
+        },
+        perform: runAsAction(async (agent, reason) => {
+            const { getBuildLedger } = await import('../npc/build_ledger.js');
+            const ledger = getBuildLedger(agent);
+            if (!ledger?.active) return 'No build is currently active.';
+            const rec = ledger.cancelBuild(ledger.active.name, reason || 'no reason given');
+            return `Cancelled build "${rec.name}" (${rec.placements} placement(s) on record). Reason: ${rec.reason}. Use !undoBuild to roll back placed blocks.`;
+        })
+    },
+    {
+        name: '!undoBuild',
+        description: 'Roll back placed blocks from the build ledger (build rollback where practical). Digs the most recently placed blocks first, bounded per call.',
+        params: {
+            'count': { type: 'int', description: 'Max blocks to roll back (default 64).' }
+        },
+        perform: runAsAction(async (agent, count) => {
+            const { rollbackBuild, getBuildLedger } = await import('../npc/build_ledger.js');
+            const ledger = getBuildLedger(agent);
+            if (!ledger?.placements?.length) return 'No placed blocks on record to roll back.';
+            const res = await rollbackBuild(agent, { max: count ?? 64 });
+            return `Rolled back ${res.rolledBack} block(s), ${res.failed} skipped/failed. ${ledger.placements.length} placement(s) still on record.`;
+        })
+    },
+    {
+        name: '!restoreTerrain',
+        description: 'Put back the blocks terrain prep removed (temporary-block management). Restores only into air, bounded per call.',
+        params: {
+            'count': { type: 'int', description: 'Max blocks to restore (default 64).' }
+        },
+        perform: runAsAction(async (agent, count) => {
+            const { restoreTempBlocks, getBuildLedger } = await import('../npc/build_ledger.js');
+            const ledger = getBuildLedger(agent);
+            if (!ledger?.tempBlocks?.length) return 'No temporary blocks pending restore.';
+            const res = await restoreTempBlocks(agent, { max: count ?? 64 });
+            return `Restored ${res.restored} block(s), ${res.failed} failed, ${res.remaining} still pending.`;
+        })
+    },
+    {
+        name: '!buildLedger',
+        description: 'Show the build ledger: active build, placements on record, temporary blocks pending restore, and last cancellation.',
+        params: {},
+        perform: runAsAction(async (agent) => {
+            const { getBuildLedger } = await import('../npc/build_ledger.js');
+            return getBuildLedger(agent)?.summary?.() ?? 'Build ledger unavailable.';
         })
     },
     {
@@ -933,6 +984,18 @@ export const actionsList = [
         }
     },
     {
+        name: '!leaveCave',
+        description: 'Come back out of the cave: restore the surface path profile and walk back to the point we entered from (recorded by !enterCave).',
+        params: {},
+        perform: async function (agent) {
+            const code = await agent.actions.runAction('action:leaveCave', async () => {
+                agent._cave_result = await leaveCave(agent);
+            }, {});
+            if (code?.interrupted) return 'Cave exit interrupted.';
+            return agent._cave_result ?? 'Done.';
+        }
+    },
+    {
         name: '!travelViaNether',
         description: 'Travel to overworld coordinates using the 1:8 nether shortcut: walk to a known portal, cross, and follow the nether-side route, e.g. !travelViaNether 800 -300. Requires a known portal (!portals).',
         params: {
@@ -1157,6 +1220,22 @@ export const actionsList = [
             if (!res.ok) return `Could not reserve: ${res.reason}`;
             return `Reserved ${qty}x ${item} for ${holder || 'self'} (6h TTL). !reservations lists all.`;
         }
+    },
+    {
+        name: '!sit',
+        description: 'Sit down on the nearest stairs/slab like a player taking a break (sneak-settle onto the seat).',
+        params: {},
+        perform: runAsAction(async (agent) => {
+            await skills.sitDown(agent.bot);
+        })
+    },
+    {
+        name: '!stand',
+        description: 'Stand back up after sitting.',
+        params: {},
+        perform: runAsAction(async (agent) => {
+            await skills.standUp(agent.bot);
+        })
     },
     {
         name: '!clearArea',

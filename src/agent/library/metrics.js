@@ -36,6 +36,8 @@ export class MetricsTracker {
         this.paths = { ok: 0, fail: 0, cachedReplays: 0 };
         this.distanceWalked = 0;
         this.waste = {};
+        /** error categorization: category -> count (GO list) */
+        this.errors = {};
         this._dirty = false;
         this.load();
     }
@@ -48,7 +50,7 @@ export class MetricsTracker {
      * Record a death. Cause may be refined later via setLastCause.
      * @param {object} [opts] { cause, pos }
      */
-    recordDeath({ cause = 'unknown', pos = null } = {}) {
+    recordDeath({ cause = 'unknown', pos = null, inventory = null } = {}) {
         this.deaths += 1;
         const c = String(cause || 'unknown').slice(0, 48);
         this.causes[c] = (this.causes[c] ?? 0) + 1;
@@ -59,6 +61,16 @@ export class MetricsTracker {
             y: pos?.y != null ? Math.round(pos.y * 10) / 10 : null,
             z: pos?.z != null ? Math.round(pos.z * 10) / 10 : null
         };
+        // Item recovery after death (GO list): snapshot what the bot was
+        // carrying so it can go back for the dropped items on respawn.
+        if (inventory && typeof inventory === 'object') {
+            const items = Object.entries(inventory)
+                .filter(([k, v]) => v > 0)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 12)
+                .map(([k, v]) => `${k} x${v}`);
+            this.lastDeath.inventory = items;
+        }
         this.persist();
         return this.lastDeath;
     }
@@ -124,6 +136,15 @@ export class MetricsTracker {
         this.persist();
     }
 
+    /** Error categorization (GO list): count failures by stable category. */
+    recordError(category, { detail = null } = {}) {
+        this.errors ??= {};
+        const key = String(category || 'unknown').slice(0, 32);
+        this.errors[key] = (this.errors[key] ?? 0) + 1;
+        this.lastError = { t: this._now(), category: key, detail: detail ? String(detail).slice(0, 120) : null };
+        this.persist();
+    }
+
     uptimeMs() {
         return Math.max(0, this._now() - this.sessionStart);
     }
@@ -163,6 +184,10 @@ export class MetricsTracker {
         lines.push(waste.length
             ? `Waste: ${waste.slice(0, 4).map(([k, n]) => `${k} x${n}`).join(', ')}`
             : 'Waste: none recorded');
+        const errs = Object.entries(this.errors ?? {});
+        lines.push(errs.length
+            ? `Errors: ${errs.sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, n]) => `${k} x${n}`).join(', ')}`
+            : 'Errors: none recorded');
         return lines.join('\n');
     }
 
@@ -192,7 +217,9 @@ export class MetricsTracker {
                 lastReplan: this.lastReplan ?? null,
                 paths: this.paths ?? { ok: 0, fail: 0, cachedReplays: 0 },
                 distanceWalked: this.distanceWalked ?? 0,
-                waste: this.waste ?? {}
+                waste: this.waste ?? {},
+                errors: this.errors ?? {},
+                lastError: this.lastError ?? null
             }, null, 2));
             fs.renameSync(tmp, fp);
             return true;
@@ -215,6 +242,8 @@ export class MetricsTracker {
                 : { ok: 0, fail: 0, cachedReplays: 0 };
             this.distanceWalked = Number(data?.distanceWalked) || 0;
             this.waste = data?.waste && typeof data.waste === 'object' ? data.waste : {};
+            this.errors = data?.errors && typeof data.errors === 'object' ? data.errors : {};
+            this.lastError = data?.lastError ?? null;
             return true;
         } catch { return false; }
     }

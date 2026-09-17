@@ -336,8 +336,14 @@ export async function wander(agent, opts = {}) {
     for (let i = 0; i < legs; i++) {
         if (bot.interrupt_code) break;
         const here = bot.entity.position;
-        const goal = nextWanderGoal(here, bot._wander_heading, rng);
+        let goal = nextWanderGoal(here, bot._wander_heading, rng);
         bot._wander_heading = goal.headingDeg;
+        // Humanlike strafing (GO list): occasionally offset the leg target
+        // laterally so we don't trace identical lines forever.
+        try {
+            const { strafeGoal } = await import('../humanlike/locomotion.js');
+            goal = { ...goal, ...strafeGoal({ x: goal.x, z: goal.z }, rng, { chance: 0.25, maxOffset: 1 }) };
+        } catch { /* strafing is decorative */ }
         if (goal.paused) {
             pauses++;
             // a human pause: stand still a moment and look around

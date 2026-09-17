@@ -29,16 +29,27 @@ export async function escortPlayer(agent, playerName, {
     let shielded = false;
     let lastCombat = null;
 
+    let lastKnownDist = null;
+    let vanishedNoted = false;
     try {
         const skills = await import('../library/skills.js');
         while (Date.now() < deadline) {
             if (bot.interrupt_code) return 'escort: interrupted.';
             const player = bot.players?.[name]?.entity;
             if (!player?.position) {
+                // Entity disappearance handling (GO list): they were right
+                // here and now the server doesn't send them — notice it.
+                if (!vanishedNoted && lastKnownDist != null && lastKnownDist < 24) {
+                    vanishedNoted = true;
+                    try { agent.attention?.recordEvent?.(bot.entity?.position?.x ?? 0, bot.entity?.position?.y ?? 0, bot.entity?.position?.z ?? 0, 'entity_vanished'); } catch { /* optional */ }
+                    try { bot.chat(`wait, where did ${name} go? they were right here...`); } catch { /* chat optional */ }
+                }
                 await _sleep(pollMs);
                 continue; // they may be out of render distance; wait, don't chase
             }
+            vanishedNoted = false;
             const dist = bot.entity?.position?.distanceTo(player.position) ?? 0;
+            lastKnownDist = dist;
             if (dist > giveUpDist) {
                 return `escort: ${name} got too far away (${Math.round(dist)}m) — gave up.`;
             }

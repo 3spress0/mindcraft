@@ -1,5 +1,6 @@
 import * as world from '../library/world.js';
 import * as mc from '../../utils/mcdata.js';
+import fs from 'fs';
 import { getCommandDocs } from './index.js';
 import convoManager from '../conversation.js';
 import { checkLevelBlueprint, checkBlueprint } from '../tasks/construction_tasks.js';
@@ -855,6 +856,58 @@ export const queryList = [
             } catch (e) {
                 return pad(`Debug failed: ${e.message}`);
             }
+        }
+    },
+    {
+        name: '!lastDeath',
+        description: 'Report the most recent death: where it happened, the cause, and what items were likely dropped — for planning a recovery run before despawn.',
+        params: {},
+        perform: function (agent) {
+            try {
+                const d = agent?.metrics?.lastDeath;
+                if (!d) return pad('No recorded death yet (good going).');
+                const where = d.x != null ? `at (${d.x}, ${d.y}, ${d.z})` : 'at an unknown spot';
+                const items = Array.isArray(d.inventory) && d.inventory.length
+                    ? `\nLikely dropped: ${d.inventory.join(', ')}` : '';
+                const age = d.t ? ` (${Math.max(0, Math.round((Date.now() - d.t) / 60000))} min ago)` : '';
+                return pad(`Last death: ${d.cause} ${where}${age}.${items}`);
+            } catch (e) { return pad(`Could not read last death: ${e.message}`); }
+        }
+    },
+    {
+        name: '!mineStatus',
+        description: 'Show the last interrupted mining run (what, how much is left, where the entrance was) for resuming.',
+        params: {},
+        perform: function (agent) {
+            try {
+                const name = agent?.bot?.username ?? agent?.name ?? 'bot';
+                let line = 'No interrupted mining run on record.';
+                try {
+                    const data = JSON.parse(fs.readFileSync(`bots/${name}/mine_state.json`, 'utf8'));
+                    if (data?.types) {
+                        const mins = Math.max(0, Math.round((Date.now() - (data.t ?? Date.now())) / 60000));
+                        line = `Interrupted run: ${data.types.join('/')}, ${data.remaining ?? '?'} left — ${data.reason ?? 'interrupted'}, ${mins} min ago. Re-run the same !mineBlocks to resume.`;
+                    }
+                } catch { /* no state file */ }
+                return pad(line);
+            } catch (e) { return pad(`Could not read mining status: ${e.message}`); }
+        }
+    },
+    {
+        name: '!timeline',
+        description: 'Show a Gantt-style timeline of recent autonomous activity: what ran, when, and how long it took.',
+        params: {},
+        perform: function (agent) {
+            try {
+                const history = agent?.autonomy?.history ?? [];
+                if (!history.length) return pad('No autonomous activity recorded yet.');
+                const rows = history.slice(-10).map(h => {
+                    const when = new Date(h.t).toISOString().slice(11, 19);
+                    const dur = typeof h.durMs === 'number' ? ` [${Math.round(h.durMs / 1000)}s]` : '';
+                    return `- ${when}${dur}  ${String(h.kind).padEnd(16)} ${(h.detail ?? '').slice(0, 30)}  -> ${String(h.result ?? '').slice(0, 26)}`;
+                });
+                return pad('Autonomy timeline (recent):\n' + rows.join('\n'));
+            } catch (e) { return pad(`Could not build timeline: ${e.message}`); }
         }
     },
 ];

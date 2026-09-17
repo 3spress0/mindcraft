@@ -106,9 +106,17 @@ export async function executeSort(bot, chestBlock, { force = false } = {}) {
         }
         const { moves } = computeSortPlan(slots);
         if (!moves.length) return 'sort: chest is already sorted';
+        // Natural inventory navigation (GO list): pace the slot moves like a
+        // player dragging items around, not an instant bulk shuffle.
+        let slotPause = null;
+        try {
+            const interaction = await import('../humanlike/interaction.js');
+            slotPause = interaction.pause;
+        } catch { /* pacing optional */ }
         for (const mv of moves) {
             if (bot.interrupt_code) break;
             try { await container.moveSlotItem(mv.from, mv.to); } catch { /* skip failed click */ }
+            try { await slotPause?.(bot, bot._personality ?? null, 'slot_move'); } catch { /* pacing advisory */ }
         }
         return `sort: arranged chest in ${moves.length} move(s)`;
     } finally {

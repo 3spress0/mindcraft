@@ -34,7 +34,7 @@ import * as world from '../library/world.js';
 import convoManager from '../conversation.js';
 
 /** Errands after which the bot walks back home (when one is set). */
-export const RETURN_HOME_KINDS = new Set(['explore', 'farm', 'inventory_full', 'patrol', 'husbandry']);
+export const RETURN_HOME_KINDS = new Set(['explore', 'farm', 'inventory_full', 'patrol', 'husbandry', 'gather_resource']);
 
 /**
  * Batch related tasks (GO list: batch related tasks): needs that pair well
@@ -257,6 +257,18 @@ export class AutonomyLoop {
             let combatState = null;
             try { combatState = updateCombatState(this.agent.bot); } catch { combatState = null; }
             this.lastCombat = combatState;
+
+            // Retreat when surprised (GO list): a strong surprise (damage,
+            // explosion) while conditions are already dangerous escalates
+            // straight to the flee flow instead of a proximity-only check.
+            try {
+                const surprisedAt = this.agent?._surprise_at ?? 0;
+                if (now - surprisedAt < 5000 && combatState && combatState.phase !== 'idle' && combatState.phase !== 'fleeing') {
+                    combatState = { ...combatState, phase: 'fleeing', reason: `surprised: ${this.agent._surprise_reason ?? 'unknown'}` };
+                    this.lastCombat = combatState;
+                    this.agent._surprise_at = 0; // consume the surprise once
+                }
+            } catch { /* surprise handling is advisory */ }
             // Food selection based on context (GO list): in a fight the bot
             // grabs quick calories; at peace it eats for saturation.
             try {
@@ -395,8 +407,23 @@ export class AutonomyLoop {
                 }
             } catch (e) {
                 result = `executor error: ${e.message}`;
+                // Error categorization (GO list): classify and count so
+                // failure modes are visible in !metrics and debug logs.
+                try {
+                    const { classifyError } = await import('../library/error_classes.js');
+                    const c = classifyError(e);
+                    const { getMetrics } = await import('../library/metrics.js');
+                    getMetrics(this.agent)?.recordError?.(c.category, { detail: c.detail });
+                    logEvent(this.agent, 'error', c.category, { kind: actionable.kind, detail: c.detail });
+                } catch { /* categorization is advisory */ }
             }
-            const entry = { t: now, kind: actionable.kind, detail: actionable.detail, result };
+            // Task timeline (GO list): record start/end so !timeline can
+            // render Gantt-style durations.
+            const endedAt = this._now();
+            const entry = {
+                t: now, kind: actionable.kind, detail: actionable.detail, result,
+                tEnd: endedAt, durMs: Math.max(0, endedAt - now)
+            };
             this.history.push(entry);
             if (this.history.length > cfg.history_limit) {
                 this.history.splice(0, this.history.length - cfg.history_limit);

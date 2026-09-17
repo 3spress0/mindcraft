@@ -13,6 +13,7 @@ const DEFAULTS = {
     place_pause_ms: [60, 220],       // pause before placing a block
     equip_pause_ms: [50, 250],       // pause when switching tools/hotbar
     window_pause_ms: [150, 450],     // pause when opening a container
+    slot_move_pause_ms: [20, 70],    // per-slot-move pacing in chest sorts
     post_action_pause_ms: [60, 200], // brief verification pause after an action
     focus_before_action: true,       // glance at the block before digging/placing
     focus_dwell_ms: [120, 450],      // how long the pre-action glance holds

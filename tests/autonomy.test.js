@@ -14,8 +14,24 @@ function tool(name, pct, broken = false) {
 
 describe('autonomy needs evaluation', () => {
     it('returns no needs for a healthy, busy bot', () => {
-        const needs = evaluateNeeds({ tools: [tool('iron_pickaxe', 0.9)], freeSlots: 20, idleForMs: 1000 }, {});
+        // stocked with wood, plenty of room, barely idle -> nothing to do
+        const needs = evaluateNeeds({
+            tools: [tool('iron_pickaxe', 0.9)], freeSlots: 20, idleForMs: 1000,
+            inventoryCounts: { oak_log: 16 }
+        }, {});
         assert.equal(needs.length, 0);
+    });
+
+    it('self-initiated gathering fires when staple materials run low', () => {
+        const needs = evaluateNeeds({ freeSlots: 20, idleForMs: 1000, inventoryCounts: { oak_log: 2 } }, {});
+        const gather = needs.find(n => n.kind === 'gather_resource');
+        assert.ok(gather, 'low wood should trigger a self-initiated gather');
+        assert.equal(gather.detail, 'log');
+        // night or no carrying room suppresses it
+        assert.ok(!evaluateNeeds({ freeSlots: 20, isNight: true, inventoryCounts: {} }, {})
+            .some(n => n.kind === 'gather_resource'));
+        assert.ok(!evaluateNeeds({ freeSlots: 2, inventoryCounts: {} }, {})
+            .some(n => n.kind === 'gather_resource'));
     });
 
     it('broken tool outranks worn tool and exploration', () => {
@@ -246,5 +262,25 @@ describe('real executors', () => {
         assert.equal(snap.freeSlots, 0);
         assert.deepEqual(snap.tools, []);
         assert.equal(snap.isNight, false);
+    });
+});
+
+import { priorityValue, PRIORITY_CLASS } from '../src/agent/autonomy/needs.js';
+
+describe('formal task priorities', () => {
+    it('survival beats upkeep beats production beats curiosity', () => {
+        assert.ok(priorityValue('tool_replace') > priorityValue('restock_torches'));
+        assert.ok(priorityValue('restock_torches') > priorityValue('farm'));
+        assert.ok(priorityValue('farm') > priorityValue('explore'));
+        assert.equal(Object.keys(PRIORITY_CLASS).length, 4);
+    });
+
+    it('a low-urgency survival need still outranks a high-urgency curiosity need', () => {
+        const needs = evaluateNeeds({
+            freeSlots: 1, // inventory_full: survival class
+            idleForMs: 120000, // explore: curiosity class
+            inventoryCounts: { oak_log: 64 }
+        }, {});
+        assert.equal(needs[0].kind, 'inventory_full');
     });
 });

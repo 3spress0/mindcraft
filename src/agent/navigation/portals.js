@@ -180,6 +180,9 @@ export async function executePortalTrip(agent, dest, { timeoutMs = 20000, pollMs
         const crossed = await waitForDimension(agent, 'the_nether', { timeoutMs, pollMs, sleep });
         if (!crossed) return { ok: false, step: 'transition', message: 'Stood in the portal but no transition happened (timeout).' };
 
+        // Dedicated nether logic: harden pathing for lava seas before walking.
+        try { const { netherHarden } = await import('./nether_nav.js'); netherHarden(bot); } catch { /* advisory */ }
+
         const y = bot.entity?.position?.y ?? 64;
         try { await walk(bot, nTarget.x, y, nTarget.z, 4); }
         catch { return { ok: false, step: 'nether-walk', message: `Could not walk to nether coords (${nTarget.x}, ${nTarget.z}).` }; }

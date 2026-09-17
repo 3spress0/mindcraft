@@ -224,3 +224,40 @@ export async function replaceTool(bot, toolName, { craftFn = null, getRecipes = 
     }
     return `Crafted a fresh ${toolName}.`;
 }
+
+/** Task families -> tool suffixes, most-preferred first. */
+const TASK_TOOLS = {
+    mine: ['pickaxe'],
+    mining: ['pickaxe'],
+    dig: ['shovel'],
+    digging: ['shovel'],
+    wood: ['axe'],
+    chop: ['axe'],
+    logging: ['axe'],
+    build: ['axe', 'shovel'],
+    fight: ['sword'],
+    combat: ['sword'],
+    harvest: ['hoe', 'axe']
+};
+
+/**
+ * Contextual tool choice (GO list): pick the best carried tool for a named
+ * task, preferring healthy durability over raw slot order. Pure-ish: reads
+ * inventory only. Returns { tool, pct } or null when nothing fits.
+ */
+export function chooseToolForTask(bot, taskName) {
+    try {
+        const suffixes = TASK_TOOLS[String(taskName ?? '').toLowerCase().trim()] ?? null;
+        if (!suffixes) return null;
+        let best = null;
+        for (const item of bot?.inventory?.slots ?? []) {
+            if (!item?.name) continue;
+            if (!suffixes.some(s => item.name.endsWith(`_${s}`) || item.name === s)) continue;
+            const cond = toolCondition(item);
+            const pct = cond?.pct ?? 1;
+            if (pct <= 0.05) continue; // nearly broken — never pick
+            if (!best || pct > best.pct) best = { tool: item.name, pct };
+        }
+        return best;
+    } catch { return null; }
+}

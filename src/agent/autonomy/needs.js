@@ -5,7 +5,30 @@
  * build the snapshot, which keeps this fully testable.
  */
 
-export const NEED_KINDS = ['tool_replace', 'inventory_full', 'restock_food', 'restock_torches', 'farm', 'rest', 'maintain_base', 'husbandry', 'patrol', 'explore'];
+export const NEED_KINDS = ['tool_replace', 'inventory_full', 'restock_food', 'restock_torches', 'farm', 'rest', 'maintain_base', 'husbandry', 'gather_resource', 'patrol', 'explore'];
+
+/**
+ * Formal priority classes (GO list: task priorities). Needs in a higher
+ * class always outrank lower classes regardless of urgency nuance; within a
+ * class, urgency breaks ties. survival > upkeep > production > curiosity.
+ */
+export const PRIORITY_CLASS = { survival: 3, upkeep: 2, production: 1, curiosity: 0 };
+export const NEED_PRIORITY = {
+    tool_replace: 'survival',
+    inventory_full: 'survival',
+    rest: 'survival',
+    restock_torches: 'upkeep',
+    restock_food: 'upkeep',
+    maintain_base: 'upkeep',
+    farm: 'production',
+    husbandry: 'production',
+    gather_resource: 'production',
+    patrol: 'curiosity',
+    explore: 'curiosity'
+};
+export function priorityValue(kind) {
+    return PRIORITY_CLASS[NEED_PRIORITY[kind] ?? 'curiosity'] ?? 0;
+}
 
 export function autonomyDefaults() {
     return {
@@ -23,7 +46,9 @@ export function autonomyDefaults() {
         max_till: 4,
         farm_expand: true,
         breed_radius: 16,
-        max_breed_pairs: 2
+        max_breed_pairs: 2,
+        gather_min_logs: 12,
+        gather_batch: 8
     };
 }
 
@@ -183,7 +208,27 @@ export function evaluateNeeds(ctx = {}, cfg = {}) {
         }
     }
 
-    needs.sort((a, b) => b.urgency - a.urgency);
+    // 4d. Self-initiated resource gathering (GO list: autonomous resource
+    //     gathering): when staple materials run low, the bot tops itself up
+    //     without being asked — daytime only, room to carry, nothing pending.
+    if (!ctx.isNight && !ctx.hasPendingResume && (ctx.freeSlots ?? 0) >= 6) {
+        const logNames = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log',
+            'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log'];
+        let logs = 0;
+        for (const n of logNames) logs += counts[n] ?? 0;
+        if (logs < (c.gather_min_logs ?? 12)) {
+            needs.push({
+                kind: 'gather_resource',
+                urgency: 0.33,
+                detail: 'log',
+                advisory: false,
+                info: `Logs: ${logs}/${c.gather_min_logs ?? 12}; self-initiated wood run.`
+            });
+        }
+    }
+
+    // Formal priority classes first, urgency within a class.
+    needs.sort((a, b) => priorityValue(b.kind) - priorityValue(a.kind) || b.urgency - a.urgency);
     return needs;
 }
 
