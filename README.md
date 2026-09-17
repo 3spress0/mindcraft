@@ -647,11 +647,14 @@ server already provides.
   materials allow: torches (`min_torches`, default 8, crafted from
   coal/charcoal + sticks) and food (`min_food`, default 5, bread from wheat).
   Nothing is crafted unless the recipe materials are already in hand.
-* **Autonomous farming** — when food is low and bread can't be crafted, the
-  loop tends crops instead: it harvests mature wheat, carrots, potatoes and
-  beetroots (reading the server-reported growth age) and plants carried seeds
-  on open farmland. Bounded per run (`max_harvest`/`max_plants`,
-  `farm_radius`) and interruptible like every other autonomy action.
+* **Autonomous farming at base scale** — when food is low and bread can't be
+  crafted, the loop tends crops instead: it harvests mature wheat, carrots,
+  potatoes and beetroots (reading the server-reported growth age), plants
+  carried seeds on open farmland, and *grows the farm itself*: when seeds
+  outnumber farmland it hoes new soil within hydration range of water and
+  plants it (`max_till` plots per run, `farm_expand: false` to disable).
+  Bounded per run (`max_harvest`/`max_plants`/`farm_radius`) and
+  interruptible like every other autonomy action.
 * **Named storage spots** — teach the bot where storage lives with
   `!nameStorage tools` standing next to a chest; `!storageSpots` lists them.
   When no chest is within 32 blocks, inventory unloads route to the nearest
@@ -868,20 +871,30 @@ This is best-effort knowledge from the bot's own window interactions — never
 from packets it shouldn't have — so it answers "where is my iron?" with a
 position instead of re-scanning the world.
 
-# Home & Unified Status
+# Home, Outposts & Unified Status
 
 ```text
 !sethome
 !home
+!setOutpost mine-camp
+!outposts
+!removeOutpost mine-camp
 !status
 !memory
 ```
 
 `!sethome` marks the current position as a persistent home waypoint (stored in
-the world model and memory bank); `!home` walks back to it. `!status` gives one
-report combining the current action, position/health/hunger, the Baritone
-movement profile and goal, plan progress, and nearby players. `!memory`
-inspects saved places, the home waypoint, and a world-model summary.
+the world model and memory bank); `!home` walks back to it. On top of home,
+the bot can keep **named outposts** — secondary bases like a mine camp or a
+village house (`!setOutpost <name>`). Outposts are stored with the same
+redundancy as home and noted in the mental map as `base` POIs, so the LLM can
+read them back with `!pois`/`!memory`. The autonomy loop is multi-base aware:
+after wandering errands it returns to the **nearest** base, and base upkeep
+(lighting) centers on whichever base the bot is living at. `!outposts` lists
+everything. `!status` gives one report combining the current action,
+position/health/hunger, the Baritone movement profile and goal, plan progress,
+and nearby players. `!memory` inspects saved places, the home waypoint, and a
+world-model summary.
 
 # Humanlike Locomotion
 
@@ -994,6 +1007,19 @@ For additional isolation, a Docker deployment can be used.
 # Benchmarking
 
 This fork contains a deterministic autonomy benchmark and a real-LLM benchmark.
+
+Beyond the scenario pipeline, each behavior layer has its own deterministic
+benchmark suite under `tests/` (run with `npm test`): **navigation**
+(route replay/cache hygiene/hazards), **storage** (unload at scale, balancing,
+reservations, tidying/sorting, fetch, recall), **survival** (a simulated week
+of needs + risk decisions), **humanlike behavior** (8 interrupt/resume and
+pacing scenarios), **exploration** (frontier coverage, ring expansion, seed
+reproducibility, avoid-zone steering, cross-session persistence) and
+**recovery** (interrupt-resume, death/respawn bookkeeping, route-failure
+campaigns, partial-failure executors, mid-patrol danger aborts, crash
+containment). The real-LLM path (`scripts/benchmark_llm.js`) swaps only the
+planner's model-decision function into the identical pipeline, with call,
+retry, timeout and cost limits enforced.
 
 Benchmark code is located in:
 

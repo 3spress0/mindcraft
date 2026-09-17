@@ -7,7 +7,7 @@ import { Vec3 } from 'vec3';
 import { mineBlocks as baritoneMineBlocks, status as baritoneStatus } from '../baritone/baritone.js';
 import { setProfileName } from '../baritone/settings.js';
 import { saveAreaAsLitematic, saveAreaAsSchem } from '../schematics/capture.js';
-import { setHome, getHome } from '../navigation/home.js';
+import { setHome, getHome, setOutpost, listOutposts, removeOutpost } from '../navigation/home.js';
 import { explore } from '../navigation/exploration.js';
 import { replaceTool } from '../library/durability.js';
 import { RISK_PRESETS } from '../humanlike/personality.js';
@@ -687,6 +687,44 @@ export const actionsList = [
             await skills.goToPosition(agent.bot, pos.x, pos.y, pos.z, 2);
             skills.log(agent.bot, `Arrived home at (${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)}).`);
         })
+    },
+    {
+        name: '!setOutpost',
+        description: 'Mark the current position as a named outpost (a secondary base). Outposts are remembered like home and count as bases for coming home and base upkeep.',
+        params: {
+            'name': { type: 'string', description: 'Short name for the outpost, e.g. "mine-camp".' },
+        },
+        perform: async function (agent, name) {
+            if (!String(name ?? '').trim()) return 'Give the outpost a name, e.g. !setOutpost mine-camp.';
+            const pos = setOutpost(agent, name);
+            if (!pos) return 'Could not determine the current position; outpost was not set.';
+            return `Outpost "${String(name).trim().toLowerCase()}" set at (${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)}).`;
+        }
+    },
+    {
+        name: '!outposts',
+        description: 'List all known outposts (named secondary bases) alongside home.',
+        params: {},
+        perform: function (agent) {
+            const home = getHome(agent);
+            const outposts = listOutposts(agent);
+            const lines = [];
+            if (home) lines.push(`home (${Math.round(home.x)}, ${Math.round(home.y)}, ${Math.round(home.z)})`);
+            for (const o of outposts) lines.push(`outpost "${o.name}" (${Math.round(o.x)}, ${Math.round(o.y)}, ${Math.round(o.z)})`);
+            if (!lines.length) return 'No bases set yet. Use !sethome or !setOutpost <name>.';
+            return `Bases:\n${lines.map(l => '- ' + l).join('\n')}`;
+        }
+    },
+    {
+        name: '!removeOutpost',
+        description: 'Forget a named outpost set with !setOutpost.',
+        params: {
+            'name': { type: 'string', description: 'Name of the outpost to remove.' },
+        },
+        perform: function (agent, name) {
+            if (removeOutpost(agent, name)) return `Outpost "${String(name ?? '').trim()}" removed.`;
+            return `No outpost named "${String(name ?? '').trim()}" found. See !outposts.`;
+        }
     },
     {
         name: '!setAutonomy',

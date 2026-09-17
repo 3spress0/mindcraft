@@ -133,6 +133,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Waypoints — memory bank places
 * [x] Named locations — `!rememberHere` / `!savedPlaces`
 * [x] Home location — `!sethome` / `!home`
+* [x] Multi-base / outpost management — `navigation/home.js`: named outposts (`!setOutpost`/`!outposts`/`!removeOutpost`) stored like home + mental-map 'base' POIs; `nearestBase` drives return-home and base upkeep
 * [x] Storage location — container index + named storage spots (`!nameStorage`/`!storageSpots`)
 * [x] Mine locations — world-model resource deposits
 * [x] Village locations — world-model locations + village benchmark
@@ -320,16 +321,16 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 
 ### Farming
 
-* [ ] Crop detection
-* [x] Crop planting — tillAndSow
-* [~] Crop harvesting — collectBlocks works on crops; no maturity check
-* [ ] Replanting
-* [ ] Farm maintenance
+* [x] Crop detection — `autonomy/farming.js` scanCrops: type + growth-age scan over server-reported blocks
+* [x] Crop planting — tillAndSow + autonomous plantSeeds on open farmland
+* [x] Crop harvesting — autonomous harvest gated on maturity (`cropAge` vs per-crop maxAge)
+* [x] Replanting — the farm loop plants carried seeds straight after harvests
+* [x] Farm maintenance — autonomous need: harvest → plant → till new plots near water when farmland runs out (`max_till`, `farm_expand`)
 * [x] Animal detection — radar/entity intel
 * [ ] Animal feeding
 * [ ] Breeding
 * [x] Animal harvesting — hunting mode
-* [~] Food production planning — cooking tasks exist; no end-to-end farm loop
+* [x] Food production planning — end-to-end base-scale farm loop: harvest, replant, and expand farmland to grow the food reserve without player help
 
 ### Combat/defense
 
@@ -464,10 +465,10 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Gather-resource benchmark — iron_mine/tree_farm scenarios
 * [x] Crafting benchmark — crafting task suite
 * [x] Mining benchmark — iron_mine scenario
-* [ ] Exploration benchmark
+* [x] Exploration benchmark — `tests/exploration_benchmark.test.js`: campaign coverage growth, ring expansion, seed reproducibility, avoid-zone steering, cross-session persistence, ledger bounds
 * [x] Navigation benchmark — `tests/navigation_benchmark.test.js`: replay integrity, cache hygiene, hazard hardening, safe route selection, frontier consistency
 * [x] Building benchmark — shelter_build/construction scenarios
-* [ ] Recovery benchmark
+* [x] Recovery benchmark — `tests/recovery_benchmark.test.js`: interrupt-resume, death/respawn bookkeeping across restarts, route-failure campaigns, partial-failure executors, mid-patrol danger aborts, executor-crash loop survival
 * [x] Storage benchmark — `tests/storage_benchmark.test.js`: unload policy at scale, balanced spreads, reservations under load, tidy plans, fetch coverage, recall ranking
 * [x] Survival benchmark — `tests/survival_benchmark.test.js`: multi-day decision suite (needs + risk gating)
 * [x] Multi-step task benchmark — scenario suite
@@ -551,7 +552,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [~] Autonomous resource gathering — npc item goals; not self-initiated
 * [x] Autonomous crafting — npc item_goal chains
 * [x] Autonomous building — npc build_goal
-* [x] Autonomous farming — `autonomy/farming.js`: harvest mature wheat/carrots/potatoes/beetroots, plant seeds on farmland
+* [x] Autonomous farming — `autonomy/farming.js`: harvest mature wheat/carrots/potatoes/beetroots, plant seeds on farmland, and expand the farm at base scale (till soil near water when seeds outnumber farmland)
 * [x] Autonomous storage management — `autonomy/unload.js`: keeps tools/armor/food/working items, deposits bulk resources to the nearest chest via `putInChest`
 * [ ] Autonomous base maintenance
 * [x] Autonomous recovery
@@ -657,9 +658,15 @@ spatial memory is searchable (`memory/recall.js`, `!recall`), the bot sleeps
 in its bed at night when it is safe to do so (autonomous `rest` need) and
 keeps its home lit (`maintain_base` need), patrols named circuits between
 known places (`autonomy/patrol.js`, `!patrol`), returns home after wandering
-errands, and remembers which routes failed so it does not retry them
-(`navigation/route_cache.js` failure ledger) — all guarded by the storage and
-survival benchmarks. Spatial recall also accepts an optional embedding
-provider (`agent._embedding_provider`) to blend vector similarity into
-keyword search. Remaining frontier: LLM-in-the-loop scenario benchmarks,
-autonomous farming at base scale, and multi-base/outpost management.
+errands — to whichever base is nearest, since named outposts
+(`!setOutpost`) now live alongside home (`navigation/home.js`) — and
+remembers which routes failed so it does not retry them
+(`navigation/route_cache.js` failure ledger). The farm feeds the bot at base
+scale: harvest, replant, and till new plots near water when farmland runs
+out. Real-LLM scenario runs flow through the same benchmark pipeline with
+call/retry/timeout/cost limits (`scripts/benchmark_llm.js`), and exploration
+and recovery each have their own campaign-level benchmark suites. Spatial
+recall accepts an optional embedding provider (`agent._embedding_provider`)
+to blend vector similarity into keyword search. Remaining frontier: animal
+feeding/breeding at base, nether-side base logistics, and multi-agent
+outpost coordination.

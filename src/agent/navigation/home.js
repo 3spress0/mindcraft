@@ -64,3 +64,114 @@ export function getHome(agent) {
 
     return null;
 }
+
+/** Outpost keys look like 'outpost:<name>'. */
+const OUTPOST_PREFIX = 'outpost:';
+
+function cleanOutpostName(name) {
+    return String(name ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Mark the current position as a named outpost (GO list: multi-base /
+ * outpost management). Stored with the same redundancy as home, and noted in
+ * the mental map as a 'base' POI so the LLM can read it back.
+ * @returns {Object|null} the recorded position or null when unusable
+ */
+export function setOutpost(agent, name) {
+    const clean = cleanOutpostName(name);
+    if (!clean) return null;
+    const pos = currentPos(agent?.bot);
+    if (!pos) return null;
+    const key = OUTPOST_PREFIX + clean;
+    const rounded = { x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z) };
+
+    try {
+        agent.world_model?.record?.('location', {
+            key,
+            name: clean,
+            kind: 'waypoint',
+            pos: rounded,
+            source: 'observed',
+        });
+    } catch { /* world model optional */ }
+
+    try {
+        agent.memory_bank?.rememberPlace?.(key, pos.x, pos.y, pos.z);
+    } catch { /* memory bank optional */ }
+
+    try {
+        agent._mental_map?.note?.(rounded, { name: `outpost-${clean}`, type: 'base', source: 'told', notes: 'named outpost' });
+    } catch { /* mental map optional */ }
+
+    return pos;
+}
+
+/**
+ * List all known outposts.
+ * @returns {Array<{name, x, y, z}>}
+ */
+export function listOutposts(agent) {
+    const out = [];
+    try {
+        const facts = agent?.world_model?.facts?.location || [];
+        for (const fact of facts) {
+            if (typeof fact?.key === 'string' && fact.key.startsWith(OUTPOST_PREFIX) && fact.pos) {
+                out.push({ name: fact.key.slice(OUTPOST_PREFIX.length), ...fact.pos });
+            }
+        }
+    } catch { /* fall through */ }
+    if (out.length) return out;
+    try {
+        const places = agent?.memory_bank?.getJson?.() ?? {};
+        for (const [key, mem] of Object.entries(places)) {
+            if (key.startsWith(OUTPOST_PREFIX) && Array.isArray(mem) && mem.length >= 3) {
+                out.push({ name: key.slice(OUTPOST_PREFIX.length), x: mem[0], y: mem[1], z: mem[2] });
+            }
+        }
+    } catch { /* fall through */ }
+    return out;
+}
+
+/**
+ * Remove a named outpost.
+ * @returns {boolean} true when something was removed
+ */
+export function removeOutpost(agent, name) {
+    const clean = cleanOutpostName(name);
+    if (!clean) return false;
+    const key = OUTPOST_PREFIX + clean;
+    let removed = false;
+    try {
+        const facts = agent?.world_model?.facts?.location || [];
+        const idx = facts.findIndex((f) => f.key === key);
+        if (idx >= 0) { facts.splice(idx, 1); removed = true; }
+    } catch { /* optional */ }
+    try {
+        const mem = agent?.memory_bank?.getJson?.();
+        if (mem && key in mem) { delete mem[key]; removed = true; }
+    } catch { /* optional */ }
+    return removed;
+}
+
+/**
+ * The base nearest to a position: home or any outpost. Defaults to the bot's
+ * current position. Falls back to home alone when no outposts exist.
+ * @returns {Object|null} {x, y, z, name} where name is 'home' or the outpost name
+ */
+export function nearestBase(agent, pos = null) {
+    const from = pos ?? currentPos(agent?.bot);
+    const candidates = [];
+    const home = getHome(agent);
+    if (home) candidates.push({ ...home, name: 'home' });
+    for (const o of listOutposts(agent)) candidates.push(o);
+    if (!candidates.length) return null;
+    if (!from || typeof from.x !== 'number') return candidates[0];
+    let best = null;
+    let bestDist = Infinity;
+    for (const c of candidates) {
+        const d = (c.x - from.x) ** 2 + (c.y - from.y) ** 2 + (c.z - from.z) ** 2;
+        if (d < bestDist) { bestDist = d; best = c; }
+    }
+    return best;
+}

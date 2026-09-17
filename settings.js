@@ -193,6 +193,8 @@ const settings = {
             "farm_radius": 16,              // blocks to scan for crops / farmland
             "max_harvest": 16,              // crops harvested per farming run
             "max_plants": 24,               // seeds planted per farming run
+            "max_till": 4,                  // new farmland plots tilled per run (base-scale farm growth)
+            "farm_expand": true,            // till+plant new plots when seeds remain but farmland runs out
             "maintain_radius": 8,           // blocks around home scanned for dark spots
             "return_home_after_errand": true, // walk back to home after wandering errands (explore/farm/unload/patrol)
             "patrol_pois": []              // named circuit of mental-map POIs (or "home"); >=2 entries enables patrol need

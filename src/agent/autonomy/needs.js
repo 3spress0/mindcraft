@@ -19,7 +19,9 @@ export function autonomyDefaults() {
         max_unload_types: 8,
         farm_radius: 16,
         max_harvest: 16,
-        max_plants: 24
+        max_plants: 24,
+        max_till: 4,
+        farm_expand: true
     };
 }
 
@@ -96,11 +98,15 @@ export function evaluateNeeds(ctx = {}, cfg = {}) {
     if (farm && foodCount < c.min_food && !((counts['wheat'] ?? 0) >= 3)) {
         const canHarvest = (farm.mature ?? 0) > 0;
         const canPlant = (farm.seeds ?? 0) > 0 && (farm.farmland ?? 0) > 0;
-        if (canHarvest || canPlant) {
+        // base-scale growth: seeds but no open farmland -> till new plots
+        const canExpand = (farm.seeds ?? 0) > 0 && !!(farm.canTill) && (farm.farmland ?? 0) === 0;
+        if (canHarvest || canPlant || canExpand) {
             needs.push({
                 kind: 'farm',
                 urgency: 0.45,
-                detail: canHarvest ? `harvest ${farm.mature} mature crop(s)` : `plant seeds (${farm.seeds} carried)`,
+                detail: canHarvest
+                    ? `harvest ${farm.mature} mature crop(s)`
+                    : canPlant ? `plant seeds (${farm.seeds} carried)` : `till new plots (${farm.seeds} seeds carried)`,
                 advisory: false,
                 info: `Food: ${foodCount}/${c.min_food}; ${farm.mature ?? 0} mature, ${farm.seeds ?? 0} seeds, ${farm.farmland ?? 0} farmland.`
             });

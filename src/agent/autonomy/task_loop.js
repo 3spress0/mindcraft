@@ -23,7 +23,7 @@ import { farmSnapshot } from './farming.js';
 import { assessLocalRisk, filterNeedsByRisk, riskLine } from './risk.js';
 import { scanDarkSpots } from './base.js';
 import { executePatrolNeed } from './patrol.js';
-import { getHome } from '../navigation/home.js';
+import { getHome, nearestBase } from '../navigation/home.js';
 import * as world from '../library/world.js';
 import convoManager from '../conversation.js';
 
@@ -44,6 +44,8 @@ export function getAutonomyConfig() {
         farm_radius: block.needs?.farm_radius ?? 16,
         max_harvest: block.needs?.max_harvest ?? 16,
         max_plants: block.needs?.max_plants ?? 24,
+        max_till: block.needs?.max_till ?? 4,
+        farm_expand: block.needs?.farm_expand ?? true,
         maintain_radius: block.needs?.maintain_radius ?? 8,
         return_home_after_errand: block.needs?.return_home_after_errand ?? true,
         patrol_pois: Array.isArray(block.needs?.patrol_pois) ? block.needs.patrol_pois : []
@@ -87,8 +89,9 @@ export function snapshotNeeds(agent, cfg) {
     let darkSpots = 0;
     if (homeSet) {
         try {
-            const home = getHome(agent);
-            darkSpots = scanDarkSpots(bot, { center: home, radius: cfg.needs.maintain_radius ?? 8 }).length;
+            // maintain whichever base the bot is currently living at
+            const base = nearestBase(agent) ?? getHome(agent);
+            darkSpots = scanDarkSpots(bot, { center: base, radius: cfg.needs.maintain_radius ?? 8 }).length;
         } catch { darkSpots = 0; }
     }
     const patrolReady = Array.isArray(cfg.needs.patrol_pois) && cfg.needs.patrol_pois.length >= 2;
@@ -205,10 +208,10 @@ export class AutonomyLoop {
                     if (RETURN_HOME_KINDS.has(actionable.kind) && cfg.needs.return_home_after_errand !== false) {
                         try {
                             const bot = this.agent?.bot;
-                            const home = getHome(this.agent);
-                            if (home && bot && !bot.interrupt_code) {
+                            const base = nearestBase(this.agent) ?? getHome(this.agent);
+                            if (base && bot && !bot.interrupt_code) {
                                 const skills = await import('../library/skills.js');
-                                await skills.goToPosition(bot, home.x, home.y, home.z, 4);
+                                await skills.goToPosition(bot, base.x, base.y, base.z, 4);
                                 result += ' [returned home]';
                             }
                         } catch { /* returning home is best-effort */ }
