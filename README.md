@@ -440,11 +440,553 @@ Useful commands:
 !buildSchematic <name> [x y z rotation]
 ```
 
+```text
+!saveArea <name> <x1> <y1> <z1> <x2> <y2> <z2>
+```
+
 Build state is persisted so interrupted construction can resume.
 
 The build system integrates with the same project planning and verification pipeline rather than bypassing it.
 
 Some complex block orientations and tile-entity contents may require additional handling.
+
+## Litematica capture and export
+
+Schematics are no longer read-only. `!saveArea` captures any box of the live
+world — block-state properties included — and serializes it to a real,
+gzip-compressed `.litematic` file with a proper block-state palette and packed
+bit arrays (entries may straddle 64-bit long boundaries exactly like the
+Litematica mod expects). `!saveAreaSchem` writes the same capture as a
+Sponge/WorldEdit `.schem` (spec v2: block-state string palette + LEB128 varint
+block data), the format WorldEdit saves and Baritone builds natively. Captured
+builds land in the build library, so the bot can round-trip them: capture a
+structure, quote its materials, and rebuild it elsewhere — or hand the file to
+a human using the Litematica mod or WorldEdit.
+
+# Baritone-style Movement
+
+Inspired by [Baritone](https://github.com/cabaletta/baritone), this fork adds a
+goal-oriented movement layer on top of mineflayer-pathfinder (rather than
+depending on Baritone itself, which would need a separate Java process).
+
+* **Goal types** — `GoalBlock`, `GoalNear`, `GoalXZ`, `GoalNearXZ`, `GoalY`,
+  `GoalGetToBlock` (stand next to / on top of a block, used for mining reach),
+  `GoalFollow` (tracks a moving entity), `GoalRunAway`, and `GoalAny` /
+  `GoalAll` / `GoalInvert` composites. Every goal implements the
+  `heuristic` / `isEnd` interface mineflayer-pathfinder expects.
+* **Movement profiles** — named presets that tune the pathfinder the way
+  Baritone's `#set` options do: `default`, `legit` (no sprinting/parkour/digging,
+  human-like), `fast` (sprint + parkour + digging), `builder` (never dig,
+  cheap placement), `safe` (legit + hazard avoidance), and `cave` (legit +
+  hazard avoidance + allows clearing gravel/cobble, tighter drop allowance —
+  tuned for tight underground spaces). Profiles are stored per-bot and apply
+  to all navigation.
+* **Path preview** — dry-run a path without moving and report whether it exists
+  and how long it is, like Baritone's `#calc`.
+* **Mining** — `#mine`-style behavior: locate the nearest matching block, path
+  to an adjacent spot, equip the best tool, and dig. It is **vein-aware**: after
+  each dig, face-connected blocks of the same type (ore veins, gravel pockets)
+  are swept out before the next nearest-search, mirroring Baritone's vein
+  mining. Disable per call with `{ vein: false }`.
+
+```text
+!setPathProfile legit
+!setPathProfile cave      # what !enterCave selects automatically
+!listPathProfiles
+!previewPath x y z
+!baritoneStatus
+!mineBlocks iron_ore 8
+```
+
+Low-level 3D pathfinding (digging, pillar-jumping, 1×1 squeezes) is left to
+these pathfinder profiles rather than bespoke code — `enterCave` swaps the
+`cave` preset in for cave work (remembering the previous profile on the bot
+so it can be reapplied), e.g. `!setPathProfile legit` when back on the surface.
+
+# Navigation Intelligence
+
+`src/agent/navigation/` adds three Baritone-inspired capabilities that make
+travel cheaper, safer, and more self-directed.
+
+## Hazard-aware navigation
+
+`hazards.js` classifies danger blocks into **hard** hazards (lava, fire, magma
+blocks, campfires, berry bushes, cacti, wither roses, powder snow) and
+**soft** hazards (soul sand, cobwebs, honey blocks). The `safe` movement
+profile hardens the pathfinder's `blocksToAvoid` set with all of these, so
+routes steer around them instead of through them.
+
+```text
+!hazards          # scan the local area and list dangers with distance
+!hazards 20       # with a custom radius (capped at 24)
+!setPathProfile safe
+```
+
+## Route caching
+
+Successful trips are remembered (downsampled waypoint corridors, per
+start/goal/profile) in `bots/<name>/route_cache.json`. When the bot is asked
+to make the same trip again, the cached route is **re-verified against the
+live world first** — sampled waypoints are checked for new lava, removed
+ground, etc. — and only replayed if still valid; otherwise the entry is
+dropped and normal pathfinding runs. Replay never blocks: any hiccup falls
+back to the regular two-probe navigation. TTL (default 15 min), entry cap
+(default 64) and the master switch live under `settings.navigation.route_cache`.
+
+The cache also keeps a **failure ledger**: when a trip fails (pathfinder gives
+up, or a replayed route no longer verifies), the route is remembered as
+*known failed* and skipped on future replays until the TTL passes. One
+successful trip over the same route forgives it. The ledger persists with the
+rest of the cache, so the bot stops burning time on routes that do not work.
+
+```text
+!routeCache        # how many routes are remembered, TTL, file location
+!routeCache clear  # drop the cache
+```
+
+## Route choice & variety
+
+When two viable routes exist (a careful probe and a may-break-blocks probe),
+hazard-aware profiles don't blindly take the first — `route_choice.js` scores
+each by length **plus hazard exposure** and picks deliberately. The breaking
+route carries a handicap so it only wins when it's meaningfully safer/shorter.
+A seeded touch of **variety** occasionally takes the near-equivalent
+alternate instead, so repeat trips don't trace one robotic line forever —
+bounded by `settings.navigation.route_variety` (default 0.1) and never into a
+clearly worse route.
+
+## Frontier exploration
+
+`exploration.js` keeps a persisted record of chunks the bot has stood in
+(`bots/<name>/exploration.json`) and picks frontier goals on an expanding
+ring around its origin — always preferring directions with no recorded
+visits. Direction choice comes from the seeded personality RNG, so two bots
+explore differently but each bot is reproducible.
+
+```text
+!explore 3         # walk 3 outward legs with legit, hazard-aware movement
+```
+
+Exploration stops cleanly on interruption, records chunks reached per leg, and
+expands the ring automatically once the current one is fully visited. Along
+the way it also notes what it passes — dark cave openings and nether portals
+become durable POIs automatically.
+
+## Caves & portals
+
+`caves.js` finds caves the legit way — the server already reports air and
+light: a dark walk-in opening (air with solid ground, open above, light ≤ 4)
+is remembered as a `cave` POI (`!caves`), and `isUnderground` knows when the
+bot has no skylight over its head.
+
+`portals.js` does the same for nether portals: observed `nether_portal`
+blocks are clustered into one portal per frame, remembered per dimension
+(`!portals`), and when the server moves the bot between dimensions the
+arrival point is anchored as a portal. Trip planning uses the classic 1:8
+shortcut — `!portalPlan 800 -300` returns step-by-step guidance folding in
+any portal the bot already knows — and `!travelViaNether 800 -300`
+**executes** it leg by leg: walk to a known portal, wait out the server-side
+transition, then follow the nether-side route (surfacing through a known
+arrival portal when one exists, or advising where to build one). No
+teleporting — only normal walking and portal use.
+
+Cave mouths are entered deliberately: `!enterCave <name>` checks the opening
+for lava/fire/magma within 8 blocks, drops a torch at the entrance when one
+is carried, and only then walks in. Dangerous mouths are refused with a
+reason.
+
+```text
+!caves              # remembered cave openings
+!enterCave cave-20-4
+!portals            # remembered nether portals (per dimension)
+!portalPlan 800 -300
+!travelViaNether 800 -300
+```
+
+## Shared bases (multi-agent)
+
+Every bot publishes its home and outposts to one shared registry
+(`bots/shared/bases.json`) the moment they are set — no extra server traffic,
+just local coordination. Any bot can see where its companions live with
+`!sharedBases` and route to the nearest one (`nearestSharedBase`). Publishing
+is best-effort: a bot with no write access still works, just alone.
+
+```text
+!sharedBases
+```
+
+# Tool Durability & Replacement
+
+`src/agent/library/durability.js` keeps tools from silently dying mid-job. It
+is fully legit: durability comes from the item-damage metadata the server
+already sends for the bot's own inventory.
+
+* **Awareness** — `!tools` lists every tool with remaining/max durability and a
+  percentage, flagging anything below the 15% replacement threshold as `WORN`
+  and anything at zero as `BROKEN`.
+* **Durability-aware digging** — `breakBlockAt` and Baritone-style `mineBlocks`
+  call `ensureUsableTool` before each dig: if the held tool can't harvest, is
+  nearly dead, or is broken, the bot swaps in the healthiest harvestable tool
+  from its inventory instead of snapping the one in hand.
+* **Replacement planning** — `replacementPlan` checks the tool's crafting
+  recipe against the inventory and reports `craftable` now or exactly which
+  materials are missing.
+* **Automatic replacement** — `!replaceTool <tool>` equips the healthiest
+  spare, or crafts a fresh one (via the normal crafting skill) when no spare
+  exists, then equips it.
+
+```text
+!tools
+!replaceTool iron_pickaxe
+```
+
+# Autonomous Task Loop
+
+`src/agent/autonomy/` gives the bot a deliberate, needs-driven idle loop —
+the "larger autonomous behavior" stage of the progression. It complements
+(but never overrides) user commands, LLM self-prompting, and survival modes.
+
+* **Needs scoring** — while idle, the loop builds a state snapshot and scores
+  needs by urgency: broken/nearly-dead tools (replace), nearly-full inventory
+  (unload to storage), low torches/food (restock), ripe crops (farm), bedtime
+  (rest), dark spots around home (maintain_base), a configured patrol circuit
+  (patrol, daytime only), and frontier exploration after long idle. Risky
+  needs are held while hostiles are close; night dampens wandering.
+* **Guardrails** — runs only when truly idle (no action, no conversation, no
+  self-prompting), personality-paced cooldown between runs, a hard action
+  timeout, and a bounded history. Executors catch their own errors; the loop
+  itself never throws.
+* **Interruptible** — every action runs through the normal action manager
+  (`autonomy:*` labels), so `!stop` and new user messages interrupt it, and
+  the behavior FSM tracks it like any other activity.
+
+```text
+!autonomyStatus        # on/off, cooldown, last run, current needs, history
+!setAutonomy off       # pause the loop; "on" resumes it
+!setRisk cautious      # risk posture: cautious | balanced | bold
+```
+
+Configuration lives under `settings.autonomy` (`enabled`, `cooldown_s`,
+`action_timeout_s`, and per-need thresholds like `tool_replace_threshold`,
+`explore_when_idle`, `explore_idle_s`, `min_torches`, `min_food`,
+`max_unload_types`, `farm_radius`, `max_harvest`, `max_plants`).
+
+# Social Memory & Reactions
+
+`src/agent/social/` gives the bot persistent people skills — all legit, built
+only on entities the server actually reports.
+
+* **Player ledger** — `bots/<name>/player_ledger.json` remembers every player
+  ever seen: trust level (`friend`/`neutral`/`hostile`), first/last seen
+  times, sighting counts, and last known distance. Bounded to 128 players,
+  atomic writes, corrupt-file tolerant.
+* **Reactions** — a throttled social pass detects players entering view,
+  approaching (≤12m), and departing (≥24m). Cooldown-gated and
+  personality-paced, the bot occasionally *whispers* a contextual reaction:
+  warm greetings scaled by sociability, wary notices for hostiles, the
+  occasional farewell. It never speaks over an active conversation and
+  respects `!stfu`.
+* **Trust commands** — teach the bot who to like:
+
+```text
+!social                          # everyone remembered, with trust + last distance
+!trustPlayer Steve helped build  # mark friend (note optional)
+!distrustPlayer Eve griefed      # mark hostile
+```
+
+Reactions can be disabled entirely with `settings.social.greetings: false`.
+
+# Storage, Reserves, Farming & Risk
+
+The autonomy loop (`src/agent/autonomy/`) now keeps the bot's material life in
+order and lets you dial its risk appetite — all using only information the
+server already provides.
+
+* **Autonomous storage management** — when free slots run low, the loop finds
+  the nearest chest within 32 blocks and deposits bulk non-essentials (sorted
+  by volume), always keeping tools, armor, food, and working items like
+  buckets and flint & steel. Deposits go through the normal `putInChest`
+  skill so the storage index stays accurate.
+* **Self-maintained reserves** — two new needs top up consumables when
+  materials allow: torches (`min_torches`, default 8, crafted from
+  coal/charcoal + sticks) and food (`min_food`, default 5, bread from wheat).
+  Nothing is crafted unless the recipe materials are already in hand.
+* **Autonomous farming at base scale** — when food is low and bread can't be
+  crafted, the loop tends crops instead: it harvests mature wheat, carrots,
+  potatoes and beetroots (reading the server-reported growth age), plants
+  carried seeds on open farmland, and *grows the farm itself*: when seeds
+  outnumber farmland it hoes new soil within hydration range of water and
+  plants it (`max_till` plots per run, `farm_expand: false` to disable).
+  Bounded per run (`max_harvest`/`max_plants`/`farm_radius`) and
+  interruptible like every other autonomy action.
+* **Animal husbandry** — the food loop extends to animals: when the bot
+  carries breeding food (wheat for cows/sheep/mooshrooms, carrots for pigs,
+  seeds for chickens) and adult animals are nearby, a `husbandry` need pairs
+  them up — bounded per run (`max_breed_pairs`), daytime-only, risk-gated
+  like other outdoor work. `!breedAnimals` does it on demand.
+* **Named storage spots** — teach the bot where storage lives with
+  `!nameStorage tools` standing next to a chest; `!storageSpots` lists them.
+  When no chest is within 32 blocks, inventory unloads route to the nearest
+  known spot (named spots, or the last chest that worked) within 64 blocks.
+* **Multi-chest load balancing** — instead of cramming everything into the
+  nearest chest, the unload executor ranks every chest in range by estimated
+  free capacity (from the storage index — legit, since it only reflects what
+  the bot has seen in its own container windows) against distance, then
+  spreads the deposit list across the best targets so no single chest
+  overflows.
+* **Storage reservation** — claim a named spot for specific item types with
+  `!reserveStorage tools iron_ingot,gold_ingot`; future unloads route those
+  items to that chest first. Pass no items to clear the reservation.
+* **Risk-aware planning** — before every autonomous action the loop assesses
+  local danger (hostile mobs in range, night) against the bot's risk posture.
+  Under high risk, risky work (exploration, farming) is held — and recorded
+  in `!autonomyStatus` — while safe upkeep (tool swaps, crafting reserves)
+  still proceeds.
+* **Risk postures** — `!setRisk cautious|balanced|bold` applies a preset from
+  `humanlike/personality.js`: cautious uses the hazard-aware `safe` path
+  profile and skips idle exploration, balanced uses default paths and
+  explores when idle, bold uses fast paths (which may dig) and explores. The
+  posture also scales the risk assessment (bold tolerates more, cautious less).
+* **Risk-aware route selection** — `navigation/route_choice.js` scores routes
+  by how much hazard corridor they cross (hard hazards count double) and picks
+  the safer one; autonomous exploration scans local hazards and steers its
+  frontier goals around them as avoid-zones.
+
+```text
+!setRisk cautious     # slow and careful
+!setRisk balanced     # default
+!setRisk bold         # fast, exploratory, may dig
+!nameStorage tools    # remember the nearest chest as "tools"
+!storageSpots         # list remembered storage spots
+!reserveStorage tools iron_ingot,gold_ingot   # route these items to "tools"
+```
+
+# Defensive Combat Readiness
+
+`src/agent/autonomy/combat.js` makes the bot's combat side deliberate and
+defensive — sensing only what the server reports:
+
+* **Threat scoring** — every hostile in range is scored from a per-mob table
+  (creepers and vindicators weigh more than zombies) with distance falloff,
+  then bucketed: `clear` / `skirmish` / `danger` / `overwhelm`.
+* **Combat readiness** — `combatReady` holds the best carried weapon and
+  puts a shield on the off-hand when one exists.
+* **Emergency escape** — `decideEscape` flees on critical health or an
+  overwhelming threat score; `executeEscape` shields up and backs away.
+  `!escape` triggers it on demand; the flow never throws.
+
+```text
+!escape             # shield up (if carried) and disengage
+```
+
+# Survival Metrics
+
+`src/agent/library/metrics.js` tracks how the bot is actually doing, persisted
+across sessions at `bots/<name>/metrics.json`: total deaths, a per-cause
+breakdown (refined from the server's death message), the last death position,
+session uptime, and deaths-per-hour. It is wired to the bot's death events
+automatically — benchmarks can assert on it, and you can just ask:
+
+```text
+!metrics
+```
+
+Four new social-flavored personality presets are also available via
+`settings.personality.preset`: `guardian`, `greeter`, `scout`, and `worker`.
+
+# Mental Map (POI Notes)
+
+`src/agent/memory/mental_map.js` gives the bot a durable sense of *where
+things are*: a journal of places of interest that the LLM authors as it
+discovers the world — villages, houses, bases, farms, storage, water, caves,
+landmarks — and reads back in later sessions. It complements the WorldModel:
+the model holds verified, decaying facts; the mental map holds durable,
+human-readable place notes with provenance (told / observed / inferred).
+
+* **The LLM takes notes** — after finding something interesting, the bot (or
+  you) notes it: `!notePlace desert-village village blacksmith has loot`.
+  Notes near an existing POI of the same type merge instead of duplicating,
+  bumping the sighting count.
+* **Automatic notes** — deaths are noted automatically with the extracted
+  cause; the map also seeds itself from the home waypoint, last death
+  position, and named storage spots.
+* **Recall & travel** — `!pois` (optionally filtered by type) lists
+  everything remembered; `!goToPoi desert-village` travels there;
+  `!memory` now includes the mental map so the LLM sees it whenever it
+  inspects its own memory.
+
+```text
+!notePlace riverside-house house two floors, door broken
+!pois village               # filter by type
+!goToPoi desert-village
+!forgetPoi old-camp
+```
+
+# Storage-Aware Fetching
+
+Because the storage index remembers what was put where, the bot can plan
+retrievals instead of re-searching: `!fetchItem iron_ingot 32` routes to the
+containers believed to hold the item (from the index), walks there, and
+withdraws until satisfied — reporting exactly which chests it visited.
+
+```text
+!fetchItem iron_ingot 32    # get 32 iron from storage
+!fetchItem bread            # get every stored bread (-1 = all)
+```
+
+# Chest Tidying, Sorting & Stack Management
+
+Chests the bot uses a lot accumulate scattered partial stacks of the same
+item, and eventually end up in arbitrary order. Both problems are fixed the
+way a player would do it — ordinary container windows, no slot-packet tricks:
+
+* **Tidy** — `!organizeChest` detects scattered partial stacks and
+  consolidates them: withdraw the item entirely and re-deposit it, letting
+  vanilla merge the stacks.
+* **Sort** — `!sortChest` rearranges the whole chest into a deterministic
+  order: category groups (tools / armor / food / resources / blocks / misc),
+  then item name, then stack size, empties last — applied with window-click
+  swaps.
+
+```text
+!organizeChest              # consolidate scattered stacks in the nearest chest
+!sortChest                  # full category/name/count sort of the nearest chest
+```
+
+The tidying module also produces category manifests so the LLM can reason
+about what a chest is for.
+
+# Respawn & Bed Awareness
+
+The bot tracks where the server puts it after death: every respawn bumps the
+metrics counter, records the position, and notes a `spawn` POI in the mental
+map. Beds anchor respawns, so the bot scans for one and notes the nearest as
+its respawn anchor — automatically on login/respawn, or on demand:
+
+```text
+!findBed                    # scan for a bed and note it as respawn anchor
+!metrics                    # respawns are listed alongside deaths
+```
+
+# Bedtime & Home Maintenance
+
+The autonomy loop keeps the bot's home life in order with two needs that run
+only when it is safe and sensible:
+
+* **Bedtime (`rest`)** — at night, if the bot knows a bed (mental map or a
+  bed it can reach), it sleeps until morning instead of wandering. Sleep is a
+  *risky* need: the risk gate holds it whenever hostiles are close, so the
+  bot never dozes off in danger. `!sleep` triggers it on demand.
+* **Home lighting (`maintain_base`)** — the bot scans the area around its
+  home (`settings.autonomy.needs.maintain_radius`) for spots dark enough to
+  spawn mobs and places torches there, but only when it actually carries
+  torches. Keeps the base lit without being asked.
+* **Patrol (`patrol`)** — with two or more named stops configured in
+  `settings.autonomy.needs.patrol_pois` (mental-map POI names, or `"home"`),
+  an idle bot walks the circuit by day instead of frontier-exploring: each
+  leg is risk-checked, the loop closes back on the first stop, and anything
+  that interrupts an action stops the patrol cleanly. `!patrol` runs a
+  circuit on demand.
+* **Coming home** — after wandering errands (explore, farm, unload, patrol)
+  the loop walks the bot back to its home base, best-effort. Disable with
+  `settings.autonomy.needs.return_home_after_errand: false`.
+
+```text
+!sleep                                # sleep in the nearest bed now
+!patrol home north-tower storage-shed # walk a named circuit now
+```
+
+# Spatial Recall
+
+`src/agent/memory/recall.js` wires retrieval into the bot's spatial memory:
+search everything it knows about places — mental map POIs, saved memory-bank
+places, named storage spots — with a free-text query. Scoring is local and
+deterministic: exact name > name substring > type > notes, ties broken by
+distance from the bot.
+
+Recall also accepts an **optional embedding hook**: if the agent carries an
+`_embedding_provider` with `embed(text) -> number[]`, each candidate's
+keyword score is blended with its cosine similarity to the query (weight 2),
+so semantically close places float up even when the words differ. Without a
+provider — or if it errors — recall silently falls back to pure keywords, so
+it never depends on an external service.
+
+```text
+!recall village blacksmith  # ranked matches across all spatial memory
+!recall iron storage
+```
+
+# Legit Awareness (Radar)
+
+Borrowing the *information* side of utility clients like Meteor Client and
+LiquidBounce — not their cheats — the bot can build a detailed picture of its
+surroundings purely from data the server already sends:
+
+* **Player intel** — exact positions, distances, compass bearings, health,
+  sneak/sprint state and held item for every visible player.
+* **Entity intel** — mobs, animals and other entities with position and bearing.
+* **Ground items** — dropped item stacks and where they are.
+* **Storage scan** — positions of nearby chests, furnaces, hoppers, barrels and
+  shulker boxes (locations only; nothing is opened).
+* **Line of sight** — sampled raycast between the bot's eye and a target point.
+* **Danger awareness** — `sensors/danger.js` packages the threat-scored
+  monsters (`autonomy/combat.js`), nearby hazard blocks, autonomy risk level,
+  and underground/darkness flags into `getFullState().danger`, so the LLM sees
+  danger every turn and can reason about threats, not just positions.
+
+This is fed into the AI's context so it can reason about *where* things are —
+and what's dangerous — and is exposed as commands:
+
+```text
+!radar      # full surroundings report
+!threats    # danger digest: risk level, threat score, hazards
+```
+
+This is observational awareness only. It does not send packets the bot isn't
+supposed to send and is not a mechanism for bypassing anti-cheat.
+
+# Storage Awareness
+
+The bot keeps an **item-location database**: every container it opens or scans
+is remembered by position with what was last seen inside. Viewing, depositing
+and withdrawing (`!viewChest` / `!putInChest` / `!takeFromChest`) all feed the
+index, and the radar's storage scan seeds positions of unopened containers. The
+index is capped, pruned by age, and persisted per-bot to
+`bots/<name>/storage_index.json`.
+
+```text
+!storage
+!findItem iron_ingot
+```
+
+This is best-effort knowledge from the bot's own window interactions — never
+from packets it shouldn't have — so it answers "where is my iron?" with a
+position instead of re-scanning the world.
+
+# Home, Outposts & Unified Status
+
+```text
+!sethome
+!home
+!setOutpost mine-camp
+!outposts
+!removeOutpost mine-camp
+!status
+!memory
+```
+
+`!sethome` marks the current position as a persistent home waypoint (stored in
+the world model and memory bank); `!home` walks back to it. On top of home,
+the bot can keep **named outposts** — secondary bases like a mine camp or a
+village house (`!setOutpost <name>`). Outposts are stored with the same
+redundancy as home and noted in the mental map as `base` POIs, so the LLM can
+read them back with `!pois`/`!memory`. The autonomy loop is multi-base aware:
+after wandering errands it returns to the **nearest** base, and base upkeep
+(lighting) centers on whichever base the bot is living at. `!outposts` lists
+everything. `!status` gives one report combining the current action,
+position/health/hunger, the Baritone movement profile and goal, plan progress,
+and nearby players. `!memory` inspects saved places, the home waypoint, and a
+world-model summary.
 
 # Humanlike Locomotion
 
@@ -461,16 +1003,81 @@ It provides controlled variation in:
 * Idle behavior
 * Per-bot movement personality
 
-The system deliberately bypasses humanization where precise control is required, such as:
+The system deliberately bypasses locomotion humanization where precise control is required, such as:
 
-* Digging
-* Block placement
 * PvP aiming
 * Riding
 * Swimming
 * Explicit skill-driven camera control
 
+(Digging and block placement are *timing*-humanized separately by the behavior
+layer below, without affecting the pathfinder's precise movement.)
+
 Humanization is intended to make movement behavior less rigid; it is not intended as a mechanism for bypassing server security systems.
+
+# Humanlike Behavior Layer
+
+Beyond locomotion, `src/agent/humanlike/` is a deliberate behavior layer where
+**all** randomness lives — seeded, bounded, and reproducible:
+
+* **`rng.js`** — seeded PRNG (mulberry32 + FNV-1a string hashing) with bounded
+  helpers: `range`, `int`, `chance`, `pick`, `triangular`, `jitter`, `bell`.
+* **`personality.js`** — per-bot trait vectors derived deterministically from a
+  seed (defaults to a hash of the bot name): `pace`, `curiosity`, `caution`,
+  `restlessness`, `sociability`, `precision`. Presets: `default`, `curious`,
+  `cautious`, `energetic`, `laidback`, `social`; exact values can be pinned via
+  overrides. Same seed ⇒ identical behavior, so tests are reproducible.
+* **`behavior_state.js`** — explicit state machine
+  `IDLE → OBSERVE → DECIDE → ACT → VERIFY → REACT/INTERRUPTED/RECOVER → RESUME`.
+  It remembers interrupted activities on a stack so the bot can resume what it
+  was doing, and it is mirrored from the action manager in `agent.js`.
+* **`attention.js`** — line-of-sight-gated sightings (no staring through
+  walls), novelty detection, last-seen tracking, sudden-event recording
+  (`entityHurt`, damage, loud sounds), and bounded glances with imprecision.
+* **`startle.js`** — loud sounds (explosions, lightning, withers, ghasts,
+  TNT…) make the bot flinch and look: the event is recorded in attention and
+  the camera glances at the source. It never interrupts the current action —
+  the risk gate handles actual danger.
+* **`interaction.js`** — look-before-you-act focus and bounded, personality-
+  scaled pauses for digging, placing, equipping, and opening containers, wired
+  into `skills.breakBlockAt/placeBlock/equip`, chest skills, and Baritone-style
+  mining. Gated off automatically in cheat mode and via `bot._humanlike_off`.
+* **`idle.js`** — context-dependent idle selection: glances at novel sights,
+  short hazard-checked wanders (gated by restlessness and idle time),
+  "checking the bag" look-downs, and bounded look-around sweeps.
+
+Wiring:
+
+* `idle_staring` mode now glances only at things the bot can actually see,
+  turns toward fresh events, and uses personality-driven cadence.
+* `idle_behavior` mode performs the longer idle activities with long cooldowns.
+* `!status` reports the behavior state, pending resume, attention summary, and
+  personality preset/seed.
+
+Configuration lives under `settings.humanlike`:
+
+```jsonc
+"humanlike": {
+    "enabled": true,
+    "seed": null,                  // fixed seed for reproducibility (else bot-name hash)
+    "personality": {
+        "preset": "default",      // default|curious|cautious|energetic|laidback|social|guardian|greeter|scout|worker
+        "overrides": {}            // e.g. { "curiosity": 0.9 }
+    },
+    "interaction": {
+        "enabled": true,
+        "dig_pause_ms": [80, 280],
+        "place_pause_ms": [60, 220],
+        "equip_pause_ms": [50, 250],
+        "window_pause_ms": [150, 450]
+        // ... focus_dwell_ms, focus_offset, post_action_pause_ms
+    },
+    "idle": { "enabled": true, "wander": true, "inspect": true, "radius": 4 }
+}
+```
+
+All timing values are [min, max] envelopes; actual waits are triangular within
+the envelope and scaled by the bot's `pace` trait, so every delay stays bounded.
 
 # Coding and Sandboxing
 
@@ -496,6 +1103,19 @@ For additional isolation, a Docker deployment can be used.
 # Benchmarking
 
 This fork contains a deterministic autonomy benchmark and a real-LLM benchmark.
+
+Beyond the scenario pipeline, each behavior layer has its own deterministic
+benchmark suite under `tests/` (run with `npm test`): **navigation**
+(route replay/cache hygiene/hazards), **storage** (unload at scale, balancing,
+reservations, tidying/sorting, fetch, recall), **survival** (a simulated week
+of needs + risk decisions), **humanlike behavior** (8 interrupt/resume and
+pacing scenarios), **exploration** (frontier coverage, ring expansion, seed
+reproducibility, avoid-zone steering, cross-session persistence) and
+**recovery** (interrupt-resume, death/respawn bookkeeping, route-failure
+campaigns, partial-failure executors, mid-patrol danger aborts, crash
+containment). The real-LLM path (`scripts/benchmark_llm.js`) swaps only the
+planner's model-decision function into the identical pipeline, with call,
+retry, timeout and cost limits enforced.
 
 Benchmark code is located in:
 

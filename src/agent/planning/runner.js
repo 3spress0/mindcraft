@@ -157,6 +157,39 @@ export class PlanRunner {
         if (this.project) this.store.save(this.project);
         syncProject(this.agent.world_model, this.project);
         this.agent.observation_collector?.saveNow?.();
+        this.writeCheckpoint();
+    }
+
+    /**
+     * Plan checkpoints (GO list): a small, always-current record of where
+     * the plan stands — which step last finished, what is active — so a
+     * restart can announce the resume point and tooling can observe progress
+     * without parsing the whole project file.
+     */
+    writeCheckpoint() {
+        try {
+            if (!this.project) return;
+            const done = this.project.steps.filter(s => s.status === STEP.DONE);
+            const last = done[done.length - 1];
+            const active = this.project.steps.find(s => s.status === STEP.ACTIVE);
+            const checkpoint = {
+                projectId: this.project.id,
+                goal: this.project.goal,
+                iteration: this.project.iteration,
+                status: this.project.status,
+                stepsDone: done.length,
+                stepsTotal: this.project.steps.length,
+                lastCompleted: last ? { id: last.id, title: last.title, at: last.finishedAt } : null,
+                active: active ? { id: active.id, title: active.title, attempt: active.attempts } : null,
+                updatedAt: Date.now()
+            };
+            this.store.saveCheckpoint(checkpoint);
+        } catch { /* checkpointing is advisory */ }
+    }
+
+    /** Read the latest checkpoint (null when none). */
+    readCheckpoint() {
+        try { return this.store.loadCheckpoint(); } catch { return null; }
     }
 
     /** Record verified step results as world-model facts (never throws into loop). */
@@ -294,6 +327,31 @@ export class PlanRunner {
             `\nRECOVERY FROM PREVIOUS FAILURE (${step.lastRecovery.reason}):\n${step.lastRecovery.guidance}` :
             (step.attempts > 1 && step.criticNote ?
                 `\nYour previous attempt did NOT verify: ${step.criticNote}. Change your approach.` : '');
+        // Self-check before action + explicit uncertainty (GO list): scan
+        // preconditions against the real inventory and tell the executor
+        // exactly what we are unsure about, instead of guessing silently.
+        let selfCheckHint = '';
+        try {
+            const { preActionCheck } = await import('./analysis.js');
+            let counts = {};
+            try {
+                const world = await import('../library/world.js');
+                counts = world.getInventoryCounts(this.agent.bot);
+            } catch { /* counts optional */ }
+            const check = preActionCheck(step, {
+                inventoryCounts: counts,
+                isNight: (this.agent.bot?.time?.timeOfDay ?? 6000) > 13000,
+                botHealthy: (this.agent.bot?.health ?? 20) > 4
+            });
+            if (check.warnings.length) {
+                selfCheckHint = `\nBEFORE YOU START — self-check flagged: ${check.warnings.join('; ')}. ` +
+                    'State any uncertainty explicitly and adapt if something is missing.';
+                try {
+                    const { logEvent } = await import('../library/structlog.js');
+                    logEvent(this.agent, 'planning', 'pre_action_check', { step: step.title, warnings: check.warnings });
+                } catch { /* logging advisory */ }
+            }
+        } catch { /* self-check is advisory */ }
 
         const message = [
             `You are executing step ${progress.done + 1} of ${progress.total} of a planned project.`,
@@ -304,6 +362,7 @@ export class PlanRunner {
             `This step is verified complete when: ${expectedText}`,
             deltaText ? `Additionally, this exact state change must occur: ${deltaText}.` : null,
             recoveryHint,
+            selfCheckHint || null,
             '',
             'Work on ONLY this step now, using whichever commands or tools you need. As soon as the step is',
             'verifiably done (or you are blocked and cannot proceed), stop and report.',
@@ -343,6 +402,15 @@ export class PlanRunner {
         this.project.replaceRemaining(result.steps, critique.failureClass, result.phases || null);
         if (result.summary) this.project.summary = result.summary;
         this.replanCount += 1;
+        // replan metrics + structured planning log
+        try {
+            const { getMetrics } = await import('../library/metrics.js');
+            getMetrics(this.agent)?.recordReplan?.({ reason: 'critic-replan' });
+        } catch { /* metrics advisory */ }
+        try {
+            const { logEvent } = await import('../library/structlog.js');
+            logEvent(this.agent, 'planning', 'replan', { iteration: this.project?.iteration ?? null, stepsLeft: result.steps.length });
+        } catch { /* logging advisory */ }
         this.persist();
         this.agent.openChat(`Revised plan (${result.steps.length} remaining steps):\n` +
             result.steps.map((s) => {

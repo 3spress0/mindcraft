@@ -21,6 +21,8 @@
 import settings from '../settings.js';
 import { CATEGORY, SOURCE } from '../world_model/world_model.js';
 import { classifyEntityLike } from './classify.js';
+import { logEvent } from '../library/structlog.js';
+import { recordDangerSpot } from '../navigation/safe_zones.js';
 
 export class ObservationCollector {
     constructor(agent, model, { store = null } = {}) {
@@ -34,6 +36,18 @@ export class ObservationCollector {
         this.lastPlayerRefresh = 0;
         this.lastScan = 0;
         this.lastSave = 0;
+        // World-model structured log: durable fact churn (not the volatile
+        // entity/threat noise, which fires every scan).
+        try {
+            if (model && !model._onFactChange) {
+                model._onFactChange = (category, key, action) => {
+                    try {
+                        if (category === CATEGORY.ENTITY || category === CATEGORY.THREAT) return;
+                        logEvent(agent, 'world_model', action, { category, key: String(key).slice(0, 96) });
+                    } catch { /* logging must never break observation */ }
+                };
+            }
+        } catch { /* optional */ }
     }
 
     config() {
@@ -150,6 +164,13 @@ export class ObservationCollector {
         for (const f of [...this.model.all(CATEGORY.THREAT)]) this.model.remove(CATEGORY.THREAT, f.id);
         this.model.recordPlayer({ health: 0 });
         this.saveNow();
+        // structured perception log + durable danger map entry
+        try {
+            logEvent(this.agent, 'perception', 'death', {
+                x: pos ? Math.round(pos.x) : null, z: pos ? Math.round(pos.z) : null
+            });
+            if (pos) recordDangerSpot(this.agent, { pos, reason: 'death' });
+        } catch { /* advisory */ }
     }
 
     /** Full sweep of loaded entities (mineflayer already tracks these). */
@@ -265,7 +286,15 @@ export class ObservationCollector {
                 detail: { attackedBot: true },
                 source: SOURCE.OBSERVED,
             }, { expiresIn: this.config().threat_ttl_ms });
+            // a place that hurts us is worth remembering
+            try {
+                recordDangerSpot(this.agent, {
+                    pos: nearest.position,
+                    reason: `attacked by ${nearest.name ?? 'hostile'}`
+                });
+            } catch { /* advisory */ }
         }
+        try { logEvent(this.agent, 'perception', 'hurt', { by: nearest?.name ?? 'unknown' }); } catch { /* advisory */ }
         this.refreshPlayer();
     }
 }

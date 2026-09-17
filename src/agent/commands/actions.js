@@ -1,8 +1,34 @@
 import * as skills from '../library/skills.js';
+import * as world from '../library/world.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
 import { buildSchematic } from '../npc/schematic_build.js';
 import { Vec3 } from 'vec3';
+import { mineBlocks as baritoneMineBlocks, status as baritoneStatus } from '../baritone/baritone.js';
+import { setProfileName } from '../baritone/settings.js';
+import { saveAreaAsLitematic, saveAreaAsSchem } from '../schematics/capture.js';
+import { setHome, getHome, setOutpost, listOutposts, removeOutpost } from '../navigation/home.js';
+import { explore } from '../navigation/exploration.js';
+import { replaceTool } from '../library/durability.js';
+import { RISK_PRESETS } from '../humanlike/personality.js';
+import { getSpotRegistry } from '../storage/placement.js';
+import { getMentalMap, POI_TYPES, noteBedIfNear } from '../memory/mental_map.js';
+import { planFetch, executeFetch } from '../storage/fetch.js';
+import { executeTidy } from '../storage/tidying.js';
+import { executeSort } from '../storage/sorting.js';
+import { resolvePatrolStops, executePatrol } from '../autonomy/patrol.js';
+import { planBreeding, executeBreeding } from '../autonomy/husbandry.js';
+import { wander } from '../navigation/exploration.js';
+import { escortPlayer } from '../autonomy/escort.js';
+import { prepareExpedition } from '../autonomy/expedition.js';
+import { pauseAll, resumeAll, cancelWithReason, pauseStatus } from '../library/pause.js';
+import { getReservations } from '../storage/reservations.js';
+import { previewPath } from '../baritone/baritone.js';
+import { GoalNear } from '../baritone/goals.js';
+import { asciiMap } from '../sensors/mapview.js';
+import { enterCave, leaveCave } from '../navigation/caves.js';
+import { executePortalTrip } from '../navigation/portals.js';
+import { decideEscape, executeEscape } from '../autonomy/combat.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -331,6 +357,150 @@ export const actionsList = [
         })
     },
     {
+        name: '!cancelBuild',
+        description: 'Cancel the active build with a reason and record it in the build ledger (dedicated cancellation bookkeeping). Does not automatically undo placed blocks — use !undoBuild for that.',
+        params: {
+            'reason': { type: 'string', description: 'Why the build is being cancelled.' }
+        },
+        perform: runAsAction(async (agent, reason) => {
+            const { getBuildLedger } = await import('../npc/build_ledger.js');
+            const ledger = getBuildLedger(agent);
+            if (!ledger?.active) return 'No build is currently active.';
+            const rec = ledger.cancelBuild(ledger.active.name, reason || 'no reason given');
+            return `Cancelled build "${rec.name}" (${rec.placements} placement(s) on record). Reason: ${rec.reason}. Use !undoBuild to roll back placed blocks.`;
+        })
+    },
+    {
+        name: '!undoBuild',
+        description: 'Roll back placed blocks from the build ledger (build rollback where practical). Digs the most recently placed blocks first, bounded per call.',
+        params: {
+            'count': { type: 'int', description: 'Max blocks to roll back (default 64).' }
+        },
+        perform: runAsAction(async (agent, count) => {
+            const { rollbackBuild, getBuildLedger } = await import('../npc/build_ledger.js');
+            const ledger = getBuildLedger(agent);
+            if (!ledger?.placements?.length) return 'No placed blocks on record to roll back.';
+            const res = await rollbackBuild(agent, { max: count ?? 64 });
+            return `Rolled back ${res.rolledBack} block(s), ${res.failed} skipped/failed. ${ledger.placements.length} placement(s) still on record.`;
+        })
+    },
+    {
+        name: '!restoreTerrain',
+        description: 'Put back the blocks terrain prep removed (temporary-block management). Restores only into air, bounded per call.',
+        params: {
+            'count': { type: 'int', description: 'Max blocks to restore (default 64).' }
+        },
+        perform: runAsAction(async (agent, count) => {
+            const { restoreTempBlocks, getBuildLedger } = await import('../npc/build_ledger.js');
+            const ledger = getBuildLedger(agent);
+            if (!ledger?.tempBlocks?.length) return 'No temporary blocks pending restore.';
+            const res = await restoreTempBlocks(agent, { max: count ?? 64 });
+            return `Restored ${res.restored} block(s), ${res.failed} failed, ${res.remaining} still pending.`;
+        })
+    },
+    {
+        name: '!buildLedger',
+        description: 'Show the build ledger: active build, placements on record, temporary blocks pending restore, and last cancellation.',
+        params: {},
+        perform: runAsAction(async (agent) => {
+            const { getBuildLedger } = await import('../npc/build_ledger.js');
+            return getBuildLedger(agent)?.summary?.() ?? 'Build ledger unavailable.';
+        })
+    },
+    {
+        name: '!saveArea',
+        description: 'Capture a box of the world (two opposite corners) and save it as a Litematica .litematic file in the build library, so it can be listed, quoted and rebuilt with !buildSchematic.',
+        params: {
+            'name': { type: 'string', description: 'Name for the saved build (no extension needed).' },
+            'x1': { type: 'float', description: 'X of the first corner.', domain: [-Infinity, Infinity] },
+            'y1': { type: 'float', description: 'Y of the first corner.', domain: [-64, 320] },
+            'z1': { type: 'float', description: 'Z of the first corner.', domain: [-Infinity, Infinity] },
+            'x2': { type: 'float', description: 'X of the opposite corner.', domain: [-Infinity, Infinity] },
+            'y2': { type: 'float', description: 'Y of the opposite corner.', domain: [-64, 320] },
+            'z2': { type: 'float', description: 'Z of the opposite corner.', domain: [-Infinity, Infinity] },
+        },
+        perform: async function (agent, name, x1, y1, z1, x2, y2, z2) {
+            try {
+                const res = saveAreaAsLitematic(agent.bot, name, { x: x1, y: y1, z: z1 }, { x: x2, y: y2, z: z2 });
+                const top = Object.entries(res.materials)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 5)
+                    .map(([item, n]) => `${item} x${n}`)
+                    .join(', ');
+                return `Saved "${res.name}.litematic" to the build library: ${res.width}x${res.height}x${res.length}, ${res.totalBlocks} blocks. Main materials: ${top}. It now shows up in !listBuilds and can be rebuilt with !buildSchematic(${res.name}).`;
+            } catch (e) {
+                return `Could not save the area: ${e.message}`;
+            }
+        }
+    },
+    {
+        name: '!saveAreaSchem',
+        description: 'Capture a box of the world (two opposite corners) and save it as a Sponge/WorldEdit .schem file in the build library — the format Baritone and WorldEdit use.',
+        params: {
+            'name': { type: 'string', description: 'Name for the saved build (no extension needed).' },
+            'x1': { type: 'float', description: 'X of the first corner.', domain: [-Infinity, Infinity] },
+            'y1': { type: 'float', description: 'Y of the first corner.', domain: [-64, 320] },
+            'z1': { type: 'float', description: 'Z of the first corner.', domain: [-Infinity, Infinity] },
+            'x2': { type: 'float', description: 'X of the opposite corner.', domain: [-Infinity, Infinity] },
+            'y2': { type: 'float', description: 'Y of the opposite corner.', domain: [-64, 320] },
+            'z2': { type: 'float', description: 'Z of the opposite corner.', domain: [-Infinity, Infinity] },
+        },
+        perform: async function (agent, name, x1, y1, z1, x2, y2, z2) {
+            try {
+                const res = saveAreaAsSchem(agent.bot, name, { x: x1, y: y1, z: z1 }, { x: x2, y: y2, z: z2 });
+                const top = Object.entries(res.materials)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 5)
+                    .map(([item, n]) => `${item} x${n}`)
+                    .join(', ');
+                return `Saved "${res.name}.schem" to the build library: ${res.width}x${res.height}x${res.length}, ${res.totalBlocks} blocks. Main materials: ${top}. It now shows up in !listBuilds.`;
+            } catch (e) {
+                return `Could not save the area: ${e.message}`;
+            }
+        }
+    },
+    {
+        name: '!mineBlocks',
+        description: 'Baritone-style #mine: find the nearest matching blocks, walk to each one and mine it with the best tool. Lava-safe (refuses blocks with lava adjacent), stops when the inventory fills, and can walk back to the entrance afterwards. Give several types comma-separated to mine by priority (e.g. diamond_ore,iron_ore).',
+        params: {
+            'block_type': { type: 'string', description: 'Block type(s) to mine, e.g. iron_ore or diamond_ore,iron_ore (priority order).' },
+            'num': { type: 'int', description: 'How many blocks to mine.', domain: [1, 512] },
+            'returnToEntrance': { type: 'string', description: '"yes" to walk back to the spot mining started from.' },
+        },
+        perform: runAsAction(async (agent, block_type, num, returnToEntrance) => {
+            const types = String(block_type ?? '').split(',').map(s => s.trim()).filter(Boolean);
+            const label = types.length === 1 ? types[0] : types.join('/');
+            const res = await baritoneMineBlocks(agent.bot, types[0], num || 1, {
+                types,
+                returnToEntrance: String(returnToEntrance ?? '').toLowerCase() === 'yes',
+                onProgress: (done, total) => skills.log(agent.bot, `Mined ${done}/${total} ${label}.`),
+            });
+            skills.log(agent.bot, `Mining finished: ${res.mined}/${res.requested} ${label} (${res.reason}).`);
+        })
+    },
+    {
+        name: '!setPathProfile',
+        description: 'Set the Baritone-style movement profile used for all pathfinding. Options: default (balanced), legit (no sprint/parkour/digging, human-like), fast (sprint+parkour+digging), builder (never dig, cheap placement), safe (legit + routes around hazards like magma, berry bushes, cacti, campfires), cave (hazard-aware underground, may dig gravel).',
+        params: {
+            'profile': { type: 'string', description: 'One of: default, legit, fast, builder, safe, cave.' },
+        },
+        perform: async function (agent, profile) {
+            try {
+                setProfileName(agent.bot, profile);
+            } catch (e) {
+                return e.message;
+            }
+            return `Movement profile set to "${profile}". It applies to all future pathfinding; see !listPathProfiles.`;
+        }
+    },
+    {
+        name: '!baritoneStatus',
+        description: 'Show the current Baritone-style movement status: active profile, whether the bot is moving, and the current goal.',
+        perform: async function (agent) {
+            return baritoneStatus(agent.bot);
+        }
+    },
+    {
         name: '!attack',
         description: 'Attack and kill the nearest entity of a given type.',
         params: {'type': { type: 'string', description: 'The type of entity to attack.'}},
@@ -563,6 +733,396 @@ export const actionsList = [
         })
     },
     {
+        name: '!sethome',
+        description: 'Mark the current position as the bot\'s home waypoint (persisted in the world model and memory). Use !home to return there.',
+        params: {},
+        perform: async function (agent) {
+            const pos = setHome(agent);
+            if (!pos) return 'Could not determine the current position; home was not set.';
+            return `Home set to (${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)}). Use !home to go back.`;
+        }
+    },
+    {
+        name: '!home',
+        description: 'Travel back to the home waypoint set with !sethome.',
+        params: {},
+        perform: runAsAction(async (agent) => {
+            const pos = getHome(agent);
+            if (!pos) {
+                skills.log(agent.bot, 'No home is set yet. Use !sethome first.');
+                return;
+            }
+            await skills.goToPosition(agent.bot, pos.x, pos.y, pos.z, 2);
+            skills.log(agent.bot, `Arrived home at (${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)}).`);
+        })
+    },
+    {
+        name: '!setOutpost',
+        description: 'Mark the current position as a named outpost (a secondary base). Outposts are remembered like home and count as bases for coming home and base upkeep.',
+        params: {
+            'name': { type: 'string', description: 'Short name for the outpost, e.g. "mine-camp".' },
+        },
+        perform: async function (agent, name) {
+            if (!String(name ?? '').trim()) return 'Give the outpost a name, e.g. !setOutpost mine-camp.';
+            const pos = setOutpost(agent, name);
+            if (!pos) return 'Could not determine the current position; outpost was not set.';
+            return `Outpost "${String(name).trim().toLowerCase()}" set at (${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)}).`;
+        }
+    },
+    {
+        name: '!outposts',
+        description: 'List all known outposts (named secondary bases) alongside home.',
+        params: {},
+        perform: function (agent) {
+            const home = getHome(agent);
+            const outposts = listOutposts(agent);
+            const lines = [];
+            if (home) lines.push(`home (${Math.round(home.x)}, ${Math.round(home.y)}, ${Math.round(home.z)})`);
+            for (const o of outposts) lines.push(`outpost "${o.name}" (${Math.round(o.x)}, ${Math.round(o.y)}, ${Math.round(o.z)})`);
+            if (!lines.length) return 'No bases set yet. Use !sethome or !setOutpost <name>.';
+            return `Bases:\n${lines.map(l => '- ' + l).join('\n')}`;
+        }
+    },
+    {
+        name: '!removeOutpost',
+        description: 'Forget a named outpost set with !setOutpost.',
+        params: {
+            'name': { type: 'string', description: 'Name of the outpost to remove.' },
+        },
+        perform: function (agent, name) {
+            if (removeOutpost(agent, name)) return `Outpost "${String(name ?? '').trim()}" removed.`;
+            return `No outpost named "${String(name ?? '').trim()}" found. See !outposts.`;
+        }
+    },
+    {
+        name: '!setAutonomy',
+        description: 'Enable or disable the autonomous task loop that acts on the bot\'s needs (tool replacement, frontier exploration) while it is idle.',
+        params: {
+            'state': { type: 'string', description: '"on" or "off".' },
+        },
+        perform: async function (agent, state) {
+            if (!agent.autonomy) return 'Autonomy loop not initialized.';
+            const on = String(state).toLowerCase() === 'on';
+            agent.autonomy.setRuntimeEnabled(on);
+            return `Autonomy loop ${on ? 'enabled' : 'disabled'}.`;
+        }
+    },
+    {
+        name: '!setRisk',
+        description: 'Set the bot\'s risk posture: cautious (hazard-aware "safe" pathing, no idle exploration), balanced (default pathing, explores when idle), or bold (fast pathing that may dig, explores when idle).',
+        params: {
+            'posture': { type: 'string', description: 'One of: cautious, balanced, bold.' },
+        },
+        perform: async function (agent, posture) {
+            const preset = RISK_PRESETS[String(posture).toLowerCase()];
+            if (!preset) return `Unknown risk posture "${posture}". Options: ${Object.keys(RISK_PRESETS).join(', ')}.`;
+            try { setProfileName(agent.bot, preset.path_profile); }
+            catch (e) { return `Could not apply path profile: ${e.message}`; }
+            agent.autonomy?.setExploreEnabled(preset.explore_when_idle);
+            agent.bot._risk_profile = String(posture).toLowerCase();
+            return `Risk posture set to ${posture.toLowerCase()}: ${preset.description}.`;
+        }
+    },
+    {
+        name: '!nameStorage',
+        description: 'Name the nearest chest (within 16 blocks) so the bot remembers it as a storage spot and can route inventory unloads to it. List spots with !storageSpots.',
+        params: {
+            'name': { type: 'string', description: 'A short name for this storage spot, e.g. "tools" or "cobble".' },
+        },
+        perform: async function (agent, name) {
+            const registry = getSpotRegistry(agent);
+            if (!registry) return 'Storage spots not available (bot not ready).';
+            const chest = world.getNearestBlock(agent.bot, 'chest', 16);
+            if (!chest) return 'No chest within 16 blocks — stand next to the chest you want to name.';
+            const spot = registry.add(name, chest.position, 'chest');
+            if (!spot) return `Could not name that spot (invalid name "${name}").`;
+            return `Named storage spot "${spot.name}": chest at (${spot.x}, ${spot.y}, ${spot.z}).`;
+        }
+    },
+    {
+        name: '!reserveStorage',
+        description: 'Reserve a named storage spot for specific item types so inventory unloads route them there. Pass no items to clear the reservation.',
+        params: {
+            'name': { type: 'string', description: 'The storage spot to reserve (must exist — see !storageSpots).' },
+            'item_types': { type: 'string', description: 'Comma or space separated item types, e.g. "iron_ingot,gold_ingot". Empty to clear.' },
+        },
+        perform: async function (agent, name, item_types) {
+            const registry = getSpotRegistry(agent);
+            if (!registry) return 'Storage spots not available (bot not ready).';
+            const items = String(item_types ?? '')
+                .split(/[,\s]+/)
+                .map(s => s.trim().toLowerCase())
+                .filter(Boolean);
+            const spot = registry.reserve(name, items);
+            if (!spot) return `No storage spot named "${name}" — create one first with !nameStorage.`;
+            if (!spot.accepts) return `Reservation cleared for "${spot.name}".`;
+            return `Reserved "${spot.name}" for: ${spot.accepts.join(', ')}.`;
+        }
+    },
+    {
+        name: '!notePlace',
+        description: 'Note the current location in the bot\'s mental map as a place of interest (village, house, base, farm, storage, water, cave, landmark, custom). Use this to remember discoveries for later.',
+        params: {
+            'name': { type: 'string', description: 'Short name for the place, e.g. "desert-village".' },
+            'type': { type: 'string', description: `POI type: ${POI_TYPES.join(', ')}. Defaults to custom.` },
+            'notes': { type: 'string', description: 'Optional notes about the place.' },
+        },
+        perform: async function (agent, name, type, notes) {
+            const map = getMentalMap(agent);
+            if (!map) return 'Mental map not available (bot not ready).';
+            const pos = agent.bot?.entity?.position;
+            if (!pos) return 'Cannot note this place: position unknown.';
+            const res = map.note(pos, { name, type, notes, source: 'told' });
+            if (!res) return `Could not note that place (invalid name "${name}").`;
+            const p = res.poi;
+            return res.created
+                ? `Noted ${p.type} "${p.name}" at (${p.x}, ${p.y}, ${p.z}).`
+                : `Updated my note on "${p.name}" at (${p.x}, ${p.y}, ${p.z}) — seen ${p.seen} time(s) now.`;
+        }
+    },
+    {
+        name: '!forgetPoi',
+        description: 'Remove a place from the bot\'s mental map.',
+        params: {
+            'name': { type: 'string', description: 'The POI name to forget (see !pois).' },
+        },
+        perform: async function (agent, name) {
+            const map = getMentalMap(agent);
+            if (!map) return 'Mental map not available (bot not ready).';
+            return map.remove(name) ? `Forgot "${name}".` : `No place named "${name}" in my mental map.`;
+        }
+    },
+    {
+        name: '!goToPoi',
+        description: 'Travel to a place in the bot\'s mental map (see !pois).',
+        params: {
+            'name': { type: 'string', description: 'The POI name to travel to.' },
+        },
+        perform: async function (agent, name) {
+            const map = getMentalMap(agent);
+            if (!map) return 'Mental map not available (bot not ready).';
+            const poi = map.get(name);
+            if (!poi) return `No place named "${name}" in my mental map.`;
+            const code = await agent.actions.runAction('action:goToPoi', async () => {
+                await skills.goToPosition(agent.bot, poi.x, poi.y, poi.z, 3);
+            }, {});
+            if (code?.interrupted) return `Interrupted on the way to "${poi.name}".`;
+            try { map.bumpVisit(poi.name); } catch { /* preferences are advisory */ }
+            return `Arrived at ${poi.type} "${poi.name}".`;
+        }
+    },
+    {
+        name: '!fetchItem',
+        description: 'Storage-aware planning: route to the containers believed to hold an item (from the storage index) and withdraw the wanted amount.',
+        params: {
+            'item_name': { type: 'string', description: 'The item to fetch, e.g. iron_ingot.' },
+            'count': { type: 'int', description: 'How many to fetch. Defaults to -1 (everything stored).', domain: [-1, Number.MAX_SAFE_INTEGER] },
+        },
+        perform: async function (agent, item_name, count) {
+            const want = count == null ? -1 : count;
+            const plan = planFetch(agent, item_name, want);
+            if (!plan.targets.length) {
+                return `No stored ${plan.itemName} on record. View chests (!viewChest) or scan (!storage) to build the index.`;
+            }
+            if (!plan.covered) {
+                return `Only ${plan.total}x ${plan.itemName} believed stored (want ${plan.want}). Fetching what exists.`;
+            }
+            const result = await executeFetch(agent, item_name, want);
+            return result;
+        }
+    },
+    {
+        name: '!organizeChest',
+        description: 'Tidy the nearest chest (within 16 blocks): consolidate scattered partial stacks of the same item by withdrawing and re-depositing them so vanilla merges the stacks.',
+        perform: async function (agent) {
+            const chest = world.getNearestBlock(agent.bot, 'chest', 16);
+            if (!chest) return 'No chest within 16 blocks — stand next to the chest to organize.';
+            const code = await agent.actions.runAction('action:organizeChest', async () => {
+                agent._tidy_result = await executeTidy(agent.bot, chest);
+            }, {});
+            if (code?.interrupted) return 'Interrupted while organizing.';
+            return agent._tidy_result ?? 'Done organizing.';
+        }
+    },
+    {
+        name: '!findBed',
+        description: 'Scan for a bed nearby and note it in the mental map as the respawn anchor.',
+        perform: async function (agent) {
+            const poi = noteBedIfNear(agent, { radius: 32 });
+            if (!poi) return 'No bed found within 32 blocks.';
+            return `Found ${poi.notes ?? 'a bed'} at (${poi.x}, ${poi.y}, ${poi.z}) — noted as respawn anchor.`;
+        }
+    },
+    {
+        name: '!breedAnimals',
+        description: 'Feed breeding food (wheat for cows/sheep, carrot for pigs, seeds for chickens) to nearby adult animals to breed them, e.g. !breedAnimals. Bounded per run.',
+        params: {},
+        perform: async function (agent) {
+            const plans = planBreeding(agent.bot, { radius: 16 });
+            if (!plans.length) return 'No breedable pairs nearby (need 2+ adults of a species and their food).';
+            const summary = plans.map(p => `${p.pairs} ${p.species} pair(s) via ${p.food}`).join('; ');
+            const code = await agent.actions.runAction('action:breedAnimals', async () => {
+                agent._breed_result = await executeBreeding(agent.bot, { radius: 16, maxPairs: Math.min(4, Math.max(...plans.map(p => p.pairs))) });
+            }, {});
+            if (code?.interrupted) return 'Breeding interrupted.';
+            return `Bred ${agent._breed_result ?? 0} pair(s) (${summary}).`;
+        }
+    },
+    {
+        name: '!enterCave',
+        description: 'Check a remembered cave opening for danger, light the entrance if a torch is carried, and walk to it, e.g. !enterCave cave-20,4.',
+        params: {
+            'name': { type: 'string', description: 'Cave name from !caves (substring matches).' },
+        },
+        perform: async function (agent, name) {
+            if (!String(name ?? '').trim()) return 'Which cave? See !caves.';
+            const code = await agent.actions.runAction('action:enterCave', async () => {
+                agent._cave_result = await enterCave(agent, name);
+            }, {});
+            if (code?.interrupted) return 'Cave entry interrupted.';
+            return agent._cave_result ?? 'Done.';
+        }
+    },
+    {
+        name: '!leaveCave',
+        description: 'Come back out of the cave: restore the surface path profile and walk back to the point we entered from (recorded by !enterCave).',
+        params: {},
+        perform: async function (agent) {
+            const code = await agent.actions.runAction('action:leaveCave', async () => {
+                agent._cave_result = await leaveCave(agent);
+            }, {});
+            if (code?.interrupted) return 'Cave exit interrupted.';
+            return agent._cave_result ?? 'Done.';
+        }
+    },
+    {
+        name: '!travelViaNether',
+        description: 'Travel to overworld coordinates using the 1:8 nether shortcut: walk to a known portal, cross, and follow the nether-side route, e.g. !travelViaNether 800 -300. Requires a known portal (!portals).',
+        params: {
+            'x': { type: 'int', description: 'Overworld x coordinate.' },
+            'z': { type: 'int', description: 'Overworld z coordinate.' }
+        },
+        perform: async function (agent, x, z) {
+            const dest = { x: Number(x), z: Number(z) };
+            if (!Number.isFinite(dest.x) || !Number.isFinite(dest.z)) return 'Usage: !travelViaNether <x> <z> (overworld coordinates).';
+            const code = await agent.actions.runAction('action:travelViaNether', async () => {
+                agent._nether_result = await executePortalTrip(agent, dest);
+            }, {});
+            if (code?.interrupted) return 'Nether travel interrupted.';
+            const res = agent._nether_result;
+            return res ? `${res.ok ? 'OK' : 'Stopped'} (${res.step}): ${res.message}` : 'No result.';
+        }
+    },
+    {
+        name: '!escape',
+        description: 'Emergency disengage: shield up (if carried) and back away from nearby threats. The bot also decides this on its own at low health.',
+        params: {},
+        perform: async function (agent) {
+            const decision = decideEscape(agent.bot, {});
+            const code = await agent.actions.runAction('action:escape', async () => {
+                agent._escape_result = await executeEscape(agent, {});
+            }, {});
+            if (code?.interrupted) return 'Escape interrupted.';
+            return `${agent._escape_result ?? 'escape: disengaged'} (reason: ${decision.reason})`;
+        }
+    },
+    {
+        name: '!patrol',
+        description: 'Walk a loop between known places from the mental map (POI names or "home"), e.g. !patrol home my-base storage-tools. Risk-checked per leg.',
+        params: {
+            'stops': { type: 'string', description: 'Space or comma separated stop names (POIs from !pois, or "home").' },
+        },
+        perform: async function (agent, stops) {
+            const names = String(stops ?? '').split(/[,\s]+/).filter(Boolean);
+            if (names.length < 2) return 'Patrol needs at least two stops (POI names or "home").';
+            const { stops: resolved, missing } = resolvePatrolStops(agent, names);
+            if (missing.length) return `Unknown patrol stop(s): ${missing.join(', ')} — see !pois.`;
+            const code = await agent.actions.runAction('action:patrol', async () => {
+                agent._patrol_result = await executePatrol(agent, { stops: resolved, maxLegs: Math.min(12, resolved.length + 1) });
+            }, {});
+            if (code?.interrupted) return 'Patrol interrupted.';
+            return agent._patrol_result ?? 'Patrol complete.';
+        }
+    },
+    {
+        name: '!sleep',
+        description: 'Sleep in the nearest bed (works at night or during thunderstorms).',
+        perform: async function (agent) {
+            const code = await agent.actions.runAction('action:sleep', async () => {
+                const ok = await skills.goToBed(agent.bot);
+                agent._sleep_result = ok;
+            }, {});
+            if (code?.interrupted) return 'Woken up early.';
+            return agent._sleep_result ? 'Slept until morning.' : 'Could not find or reach a bed to sleep in.';
+        }
+    },
+    {
+        name: '!sortChest',
+        description: 'Fully sort the nearest chest (within 16 blocks) by category (tools/armor/food/resources/blocks), then item name, then stack size — using ordinary window clicks. Skips chests that are already tidy unless force is "yes".',
+        params: {
+            'force': { type: 'string', description: '"yes" to sort even when the chest is already tidy enough.' }
+        },
+        perform: async function (agent, force) {
+            const chest = world.getNearestBlock(agent.bot, 'chest', 16);
+            if (!chest) return 'No chest within 16 blocks — stand next to the chest to sort.';
+            const code = await agent.actions.runAction('action:sortChest', async () => {
+                agent._sort_result = await executeSort(agent.bot, chest, { force: String(force ?? '').toLowerCase() === 'yes' });
+            }, {});
+            if (code?.interrupted) return 'Interrupted while sorting.';
+            return agent._sort_result ?? 'Done sorting.';
+        }
+    },
+    {
+        name: '!trustPlayer',
+        description: 'Mark a player as a trusted friend in social memory. Friends get warm greetings and no hostility warnings.',
+        params: {
+            'player': { type: 'string', description: 'The player\'s username.' },
+            'note': { type: 'string', description: 'Optional note about why they are trusted.' },
+        },
+        perform: async function (agent, player, note) {
+            if (!agent.player_ledger) return 'Social memory not initialized.';
+            agent.player_ledger.markFriend(player, note || null);
+            agent.player_ledger.persist();
+            return `${player} is now marked as a friend.`;
+        }
+    },
+    {
+        name: '!distrustPlayer',
+        description: 'Mark a player as hostile in social memory. The bot will keep wary of them and warn them to keep distance.',
+        params: {
+            'player': { type: 'string', description: 'The player\'s username.' },
+            'note': { type: 'string', description: 'Optional note about why they are distrusted.' },
+        },
+        perform: async function (agent, player, note) {
+            if (!agent.player_ledger) return 'Social memory not initialized.';
+            agent.player_ledger.markHostile(player, note || null);
+            agent.player_ledger.persist();
+            return `${player} is now marked as hostile.`;
+        }
+    },
+    {
+        name: '!replaceTool',
+        description: 'Replace a worn or broken tool: equips the healthiest spare from the inventory, or crafts a fresh one if materials are available.',
+        params: {
+            'tool_name': { type: 'string', description: 'The tool to replace, e.g. iron_pickaxe, stone_axe.' },
+        },
+        perform: runAsAction(async (agent, tool_name) => {
+            const summary = await replaceTool(agent.bot, tool_name, { craftFn: skills.craftRecipe });
+            skills.log(agent.bot, summary);
+        })
+    },
+    {
+        name: '!explore',
+        description: 'Autonomously explore the surrounding area: walk outward toward unvisited frontier chunks on an expanding ring, recording what is seen. Uses legit, hazard-aware movement and stops cleanly if interrupted.',
+        params: {
+            'legs': { type: 'int', description: 'How many exploration legs (outward trips) to walk.', domain: [1, 8] },
+        },
+        perform: runAsAction(async (agent, legs) => {
+            const summary = await explore(agent, { legs: legs ?? undefined });
+            skills.log(agent.bot, summary);
+        })
+    },
+    {
         name: '!useOn',
         description: 'Use (right click) the given tool on the nearest target of the given type.',
         params: {
@@ -572,5 +1132,153 @@ export const actionsList = [
         perform: runAsAction(async (agent, tool_name, target) => {
             await skills.useToolOn(agent.bot, tool_name, target);
         })
+    },
+    {
+        name: '!pause',
+        description: 'Pause all autonomous behavior (modes, autonomy, self-prompting). The bot keeps listening and answering chat. Use !resume to continue.',
+        params: {},
+        perform: function (agent) {
+            pauseAll(agent);
+            return 'Paused. I will not act on my own until you say !resume.';
+        }
+    },
+    {
+        name: '!resume',
+        description: 'Resume autonomous behavior after a !pause.',
+        params: {},
+        perform: function (agent) {
+            const was = agent._paused;
+            resumeAll(agent);
+            return was ? 'Resumed — back to work.' : `I was not paused (${pauseStatus(agent)}).`;
+        }
+    },
+    {
+        name: '!cancel',
+        description: 'Cancel the current action with a reason, e.g. !cancel we need the wood for something else. Like !stop, but the reason is remembered.',
+        params: {
+            'reason': { type: 'string', description: 'Why the action is being cancelled.' }
+        },
+        perform: async function (agent, reason) {
+            return cancelWithReason(agent, String(reason ?? 'no reason given'));
+        }
+    },
+    {
+        name: '!wander',
+        description: 'Wander locally in a humanlike way: short legs with gentle turns, occasional pauses, no cliff walking. Optional leg count 1-8.',
+        params: {
+            'legs': { type: 'int', description: 'Number of wander legs (1-8). Defaults to 3.' }
+        },
+        perform: async function (agent, legs) {
+            const code = await agent.actions.runAction('action:wander', async () => {
+                agent._wander_result = await wander(agent, { legs: legs ?? 3 });
+            }, {});
+            if (code?.interrupted) return 'Wander interrupted.';
+            return agent._wander_result ?? 'Done wandering.';
+        }
+    },
+    {
+        name: '!escort',
+        description: 'Escort a player for up to 2 minutes: stay close, ready weapon/shield when threats appear, give up if they run too far ahead.',
+        params: {
+            'player': { type: 'string', description: 'Name of the player to escort.' }
+        },
+        perform: async function (agent, player) {
+            const code = await agent.actions.runAction('action:escort', async () => {
+                agent._escort_result = await escortPlayer(agent, player, {});
+            }, { timeout: 150 });
+            if (code?.interrupted) return 'Escort interrupted.';
+            return agent._escort_result ?? 'Escort done.';
+        }
+    },
+    {
+        name: '!kit',
+        description: 'Prepare an expedition kit: check food/tools/torches against the trip kind (generic, mining, exploring, caving), craft torches when possible, and report gaps.',
+        params: {
+            'kind': { type: 'string', description: 'Trip kind: generic | mining | exploring | caving.' }
+        },
+        perform: async function (agent, kind) {
+            const code = await agent.actions.runAction('action:kit', async () => {
+                agent._kit_result = await prepareExpedition(agent, { kind: kind ?? 'generic' });
+            }, {});
+            if (code?.interrupted) return 'Kit preparation interrupted.';
+            return agent._kit_result ?? 'Kit checked.';
+        }
+    },
+    {
+        name: '!reserveResource',
+        description: 'Reserve a quantity of an item for a project so background flows do not spend it, e.g. !reserveResource iron_ingot 16. Use release as holder action to free it.',
+        params: {
+            'item': { type: 'string', description: 'Item name to reserve.' },
+            'qty': { type: 'int', description: 'Quantity to reserve.' },
+            'holder': { type: 'string', description: 'Who the reservation is for (defaults to "self").' }
+        },
+        perform: function (agent, item, qty, holder) {
+            if (!item || !(Number(qty) > 0)) return 'Usage: !reserveResource <item> <qty> [holder]';
+            const reg = getReservations(agent);
+            if (!reg) return 'No reservations registry.';
+            const res = reg.reserve(item, qty, holder || 'self');
+            if (!res.ok) return `Could not reserve: ${res.reason}`;
+            return `Reserved ${qty}x ${item} for ${holder || 'self'} (6h TTL). !reservations lists all.`;
+        }
+    },
+    {
+        name: '!sit',
+        description: 'Sit down on the nearest stairs/slab like a player taking a break (sneak-settle onto the seat).',
+        params: {},
+        perform: runAsAction(async (agent) => {
+            await skills.sitDown(agent.bot);
+        })
+    },
+    {
+        name: '!stand',
+        description: 'Stand back up after sitting.',
+        params: {},
+        perform: runAsAction(async (agent) => {
+            await skills.standUp(agent.bot);
+        })
+    },
+    {
+        name: '!clearArea',
+        description: 'Terrain preparation: clear every block inside a box (two opposite corners), keeping the floor plane — e.g. flatten a build site before !buildSchematic. Bounded at 256 blocks per call.',
+        params: {
+            'x1': { type: 'int', description: 'Corner 1 x.' }, 'y1': { type: 'int', description: 'Corner 1 y.' }, 'z1': { type: 'int', description: 'Corner 1 z.' },
+            'x2': { type: 'int', description: 'Corner 2 x.' }, 'y2': { type: 'int', description: 'Corner 2 y.' }, 'z2': { type: 'int', description: 'Corner 2 z.' }
+        },
+        perform: runAsAction(async (agent, x1, y1, z1, x2, y2, z2) => {
+            const res = await skills.clearArea(agent.bot, { x: x1, y: y1, z: z1 }, { x: x2, y: y2, z: z2 }, {});
+            skills.log(agent.bot, `Cleared ${res.cleared} block(s), skipped ${res.skipped} (${res.reason}).`);
+        })
+    },
+    {
+        name: '!showPath',
+        description: 'Preview AND visualize a path to coordinates without walking it: dry-run the route, draw it on the ASCII map, and save the waypoint list to bots/<name>/path_preview.json.',
+        params: {
+            'x': { type: 'int', description: 'Target x.' },
+            'y': { type: 'int', description: 'Target y.' },
+            'z': { type: 'int', description: 'Target z.' }
+        },
+        perform: function (agent, x, y, z) {
+            if (x == null || y == null || z == null) return 'Usage: !showPath <x> <y> <z>';
+            try {
+                const result = previewPath(agent.bot, new GoalNear(x, y, z, 2), { includeWaypoints: true });
+                const found = result?.ok ?? false;
+                const waypoints = result?.waypoints ?? [];
+                let viz = '';
+                try { viz = asciiMap(agent, { radius: 24, path: waypoints }); } catch { viz = ''; }
+                try {
+                    const dir = path.join('bots', agent?.bot?.username ?? agent?.name ?? 'bot');
+                    fs.mkdirSync(dir, { recursive: true });
+                    fs.writeFileSync(path.join(dir, 'path_preview.json'), JSON.stringify({
+                        target: { x, y, z }, found, length: result?.length ?? waypoints.length, waypoints
+                    }, null, 2));
+                } catch { /* visualization file is optional */ }
+                const head = found
+                    ? `Path preview to (${x}, ${y}, ${z}): exists, ${waypoints.length} waypoints.`
+                    : `Path preview to (${x}, ${y}, ${z}): no route found.`;
+                return `${head}\n${viz}\nWaypoints saved to bots/<name>/path_preview.json.`;
+            } catch (e) {
+                return `Path preview failed: ${e.message}`;
+            }
+        }
     },
 ];

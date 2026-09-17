@@ -5,6 +5,7 @@ import { Prompter } from '../models/prompter.js';
 import { initModes } from './modes.js';
 import { initBot } from '../utils/mcdata.js';
 import { containsCommand, commandExists, executeCommand, truncCommandMessage, isAction, blacklistCommands } from './commands/index.js';
+import { checkConfirmation, consumeConfirmation } from './commands/confirm.js';
 import { executeCommandToolCall } from './commands/tool_adapter.js';
 import { isNativeToolResponse } from '../models/native_tools.js';
 import { ActionManager } from './action_manager.js';
@@ -20,6 +21,20 @@ import { ReactMessageManager } from './react_message_manager.js';
 import convoManager from './conversation.js';
 import { addBrowserViewer } from './vision/browser_viewer.js';
 import { serverProxy, sendOutputToServer } from './mindserver_proxy.js';
+import { getStorageIndex } from './storage/index.js';
+import { createPersonality } from './humanlike/personality.js';
+import { BehaviorStateMachine } from './humanlike/behavior_state.js';
+import { AttentionTracker } from './humanlike/attention.js';
+import { handleSound } from './humanlike/startle.js';
+import { notePortalAt, currentDimension } from './navigation/portals.js';
+import { AutonomyLoop } from './autonomy/task_loop.js';
+import { PlayerLedger } from './social/player_ledger.js';
+import { recordDangerSpot } from './navigation/safe_zones.js';
+import { detectPreviousCrash, markCleanShutdown } from './library/crash_guard.js';
+import { getMetrics } from './library/metrics.js';
+import { MetricsTracker, causeFromDeathMessage } from './library/metrics.js';
+import { MentalMap, noteBedIfNear } from './memory/mental_map.js';
+import { ReactionGate, detectSocialEvents, reactionMessage } from './social/reactions.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
 import { speak } from './speak.js';
@@ -120,6 +135,120 @@ export class Agent {
 
         initModes(this);
 
+        // ---- humanlike behavior layer (seeded, bounded; src/agent/humanlike/) ----
+        try {
+            const hl = settings.humanlike ?? {};
+            const preset = hl.personality?.preset ?? 'default';
+            const overrides = hl.personality?.overrides ?? {};
+            this.personality = createPersonality({
+                seed: hl.seed ?? null,
+                name: this.name || 'mindcraft',
+                preset,
+                overrides
+            });
+            this.behavior_state = new BehaviorStateMachine();
+            this.attention = new AttentionTracker();
+            this.last_activity_change = Date.now();
+            // mirrors on the bot so skills/modes can reach the layer without the agent ref
+            this.bot._personality = this.personality;
+            this.bot._behavior_state = this.behavior_state;
+            this.bot._attention = this.attention;
+
+            // perception-driven reactions: remember sudden events worth turning toward
+            this.bot.on('entityHurt', (entity) => {
+                try {
+                    const pos = entity?.position;
+                    const self = this.bot.entity?.position;
+                    if (pos && self && pos.distanceTo(self) < 24) {
+                        this.attention.recordEvent(pos.x, pos.y + 1, pos.z, 'entity_hurt');
+                    }
+                } catch (e) { /* never let reaction hooks break the bot */ }
+            });
+            this.bot.on('health', () => {
+                try {
+                    const self = this.bot.entity?.position;
+                    if (self) this.attention.recordEvent(self.x, self.y + 1, self.z, 'damage');
+                } catch (e) { /* ignore */ }
+            });
+        } catch (e) {
+            console.error('Humanlike layer init failed:', e);
+            this.personality = createPersonality({ name: this.name || 'mindcraft' });
+            this.behavior_state = new BehaviorStateMachine();
+            this.attention = new AttentionTracker();
+        }
+
+        // Autonomous task loop: evaluates needs while idle and acts on the
+        // most urgent one (see src/agent/autonomy/). Runs through the normal
+        // Crash detection + restart backoff (GO list: persistent crash
+        // recovery, resume-after-crash). When the previous session died
+        // without a clean shutdown, hold autonomy off for an escalating
+        // window and tell the model it is resuming after a crash.
+        try {
+            this.crash_info = detectPreviousCrash(this.name || 'bot');
+            if (this.crash_info.crashed) {
+                this._autonomy_backoff_until = Date.now() + this.crash_info.backoffMs;
+                console.log(`[crash-guard] previous session crashed (streak ${this.crash_info.streak}); autonomy backoff ${Math.round(this.crash_info.backoffMs / 1000)}s`);
+                this.bot._crash_backoff_s = Math.round(this.crash_info.backoffMs / 1000);
+            }
+        } catch (e) {
+            console.error('Crash-guard init failed:', e.message);
+            this.crash_info = null;
+        }
+
+        // action manager so it stays fully interruptible.
+        try {
+            this.autonomy = new AutonomyLoop(this);
+            this.bot._autonomy = this.autonomy;
+        } catch (e) {
+            console.error('Autonomy loop init failed:', e);
+            this.autonomy = null;
+        }
+
+        // Humanlike locomotion texture (GO list: natural accel/decel,
+        // strafing, sprint gating near obstacles, swim/climb pacing):
+        // configures pathfinder + control state, never reimplements pathing.
+        try {
+            const { attachLocomotion } = await import('./humanlike/locomotion.js');
+            this._locomotion = attachLocomotion(this.bot, {
+                rng: this.personality?.rng ?? null,
+                personality: this.personality ?? null
+            });
+        } catch (e) { /* locomotion layer is advisory */ }
+
+        // Social memory: persistent ledger of known players + reaction gating.
+        try {
+            this.player_ledger = new PlayerLedger({ botName: this.name || 'bot' }).load();
+            this.bot._player_ledger = this.player_ledger;
+            this._social_gate = new ReactionGate();
+            this._social_prev = {};
+            this._last_social_tick = 0;
+            this._last_ledger_save = 0;
+        } catch (e) {
+            console.error('Social layer init failed:', e);
+            this.player_ledger = null;
+        }
+
+        // Survival metrics: deaths, causes, uptime — persisted across sessions.
+        try {
+            this.metrics = new MetricsTracker({ botName: this.name || 'bot' });
+            this.bot._metrics = this.metrics;
+        } catch (e) {
+            console.error('Metrics init failed:', e);
+            this.metrics = null;
+        }
+
+        // Mental map: durable POI notes (villages, houses, bases...) the LLM
+        // can author with !notePlace and read via !memory / !pois.
+        try {
+            this.mental_map = new MentalMap({ botName: this.name || 'bot' });
+            this.bot._mental_map = this.mental_map;
+            this.mental_map.seedFromAgent(this);
+            noteBedIfNear(this, { radius: 32 }); // respawn anchor awareness
+        } catch (e) {
+            console.error('Mental map init failed:', e);
+            this.mental_map = null;
+        }
+
         this.bot.on('login', () => {
             console.log(this.name, 'logged in!');
             serverProxy.login();
@@ -189,6 +318,14 @@ export class Agent {
             }
         }
 
+        // Storage index: remember where containers are and what they hold, so
+        // chest interactions and !findItem build persistent knowledge.
+        try {
+            getStorageIndex(this);
+        } catch (err) {
+            console.warn('storage-index setup failed:', err.message);
+        }
+
         const ignore_messages = [
             "Set own game mode to",
             "Set the time to",
@@ -252,6 +389,14 @@ export class Agent {
                 };
                 convoManager.receiveFromBot(this.last_sender, msg_package);
             }
+        }
+        else if (this.crash_info?.crashed) {
+            // resume-after-crash: let the model know what happened so it can
+            // re-orient deliberately instead of assuming a fresh start
+            await this.handleMessage('system',
+                `You just restarted after an unexpected crash (crash streak ${this.crash_info.streak}). ` +
+                `You respawned and your memory/world knowledge were loaded from disk. ` +
+                `Re-orient: check !status, and resume whatever you were doing if it still makes sense.`, 2);
         }
         else if (init_message && !hasLoadedConversation(save_data)) {
             await this.handleMessage('system', init_message, 2);
@@ -483,6 +628,13 @@ export class Agent {
                     this.routeResponse(source, `Command '${user_command_name}' does not exist.`);
                     return false;
                 }
+                // Confirmation for risky actions (GO list): risky commands
+                // need an explicit "confirm" before they run.
+                const gate = checkConfirmation(this, source, user_command_name, message);
+                if (!gate.proceed) {
+                    this.routeResponse(source, gate.ask);
+                    return true;
+                }
                 this.routeResponse(source, `*${source} used ${user_command_name.substring(1)}*`);
                 if (user_command_name === '!newAction') {
                     // all user-initiated commands are ignored by the bot except for this one
@@ -493,6 +645,16 @@ export class Agent {
                 if (execute_res) 
                     this.routeResponse(source, execute_res);
                 return true;
+            }
+            // A bare "confirm" re-issues the risky command we asked about.
+            if (/^\s*confirm\s*$/i.test(message)) {
+                const pendingCommand = consumeConfirmation(this, source);
+                if (pendingCommand) {
+                    this.routeResponse(source, `*${source} confirmed ${pendingCommand.substring(1)}*`);
+                    let execute_res = await executeCommand(this, pendingCommand);
+                    if (execute_res) this.routeResponse(source, execute_res);
+                    return true;
+                }
             }
         }
 
@@ -770,9 +932,58 @@ export class Agent {
             if (this.bot.health < prev_health) {
                 this.bot.lastDamageTime = Date.now();
                 this.bot.lastDamageTaken = prev_health - this.bot.health;
+                // Surprise marker (GO list): getting hit is the strongest
+                // unexpected event — the autonomy loop re-evaluates.
+                try {
+                    this._surprise_at = Date.now();
+                    this._surprise_reason = 'took damage';
+                } catch { /* optional */ }
+                // Reaction to player attacks (GO list): if a player is right
+                // on top of us, respond in character — protest when trusted,
+                // warn + back off when not. Advisory, debounced.
+                try {
+                    const now = Date.now();
+                    if (now - (this._last_attack_react ?? 0) > 8000) {
+                        this._last_attack_react = now;
+                        const me = this.bot.entity?.position;
+                        const attacker = Object.values(this.bot.entities ?? {}).find(e =>
+                            e?.type === 'player' && e !== this.bot.entity && me && e.position &&
+                            e.position.distanceTo(me) < 5);
+                        if (attacker) {
+                            import('./humanlike/reactions.js').then(({ reactToPlayerAttack }) => {
+                                const trusted = this.player_ledger?.get?.(attacker.username)?.trust === 'friend';
+                                return reactToPlayerAttack(this, { attacker, trust: trusted });
+                            }).catch(() => {});
+                        }
+                    }
+                } catch { /* reactions must never break health handling */ }
             }
             prev_health = this.bot.health;
         });
+        // Reaction to player builds (GO list): a block appearing near a
+        // player is someone building — glance at it, occasionally remark.
+        try {
+            this.bot.on('blockUpdate', (oldBlock, newBlock) => {
+                try {
+                    if (!oldBlock || !newBlock || oldBlock.name === newBlock.name) return;
+                    if (newBlock.name === 'air' || newBlock.name === 'cave_air') return;
+                    const pos = newBlock.position;
+                    const me = this.bot.entity?.position;
+                    if (!pos || !me || pos.distanceTo(me) > 16) return;
+                    // only react when a player is close enough to be the builder
+                    const builder = Object.values(this.bot.entities ?? {}).find(e =>
+                        e?.type === 'player' && e !== this.bot.entity && e.position &&
+                        e.position.distanceTo(pos) < 8);
+                    if (!builder) return;
+                    const now = Date.now();
+                    if (now - (this._last_build_react ?? 0) < 12000) return;
+                    this._last_build_react = now;
+                    this.attention?.recordEvent?.(pos.x, pos.y, pos.z, 'player_build');
+                    import('./humanlike/reactions.js').then(({ reactToPlayerBuild }) =>
+                        reactToPlayerBuild(this, { pos, builder: builder.username })).catch(() => {});
+                } catch { /* reactions must never break block handling */ }
+            });
+        } catch { /* event optional */ }
         // Logging callbacks
         this.bot.on('error' , (err) => {
             console.error('Error event!', err);
@@ -788,6 +999,49 @@ export class Agent {
         this.bot.on('death', () => {
             this.actions.cancelResume();
             this.actions.stop();
+            try {
+                this.metrics?.recordDeath({
+                    pos: this.bot.entity?.position,
+                    inventory: this._last_inventory_snapshot ?? null
+                });
+            } catch { /* metrics must never break death handling */ }
+        });
+        this.bot.on('respawn', () => {
+            // Respawn awareness: where did the server put me, and is there a
+            // bed anchoring it? Both feed metrics and the mental map.
+            try {
+                const pos = this.bot.entity?.position;
+                this.metrics?.recordRespawn({ pos });
+                if (pos) {
+                    this.mental_map?.note(pos, { name: 'spawn-point', type: 'spawn', source: 'observed', notes: 'where I respawned' });
+                }
+                // Dimension change = the server just moved me through a
+                // portal: anchor the arrival point for portal routing.
+                const dim = currentDimension(this);
+                if (this._lastDimension && dim !== this._lastDimension && pos) {
+                    notePortalAt(this, pos, dim, { suffix: '-arrival' });
+                }
+                this._lastDimension = dim;
+                noteBedIfNear(this, { radius: 32 });
+                // Item recovery after death (GO list): if the last death
+                // recorded a position and what we were carrying, nudge the
+                // LLM to consider a recovery run — items despawn in ~5 min.
+                try {
+                    const d = this.metrics?.lastDeath;
+                    if (d && d.x != null && Array.isArray(d.inventory) && d.inventory.length > 0) {
+                        this.history?.add?.('system',
+                            `You just respawned after dying at (${d.x}, ${d.y}, ${d.z}). ` +
+                            `Your dropped items included: ${d.inventory.slice(0, 6).join(', ')}. ` +
+                            `They despawn in about 5 minutes — consider going back for them if they are worth it.`);
+                        d._recoveryNotified = true;
+                    }
+                } catch { /* recovery nudge is advisory */ }
+            } catch { /* respawn bookkeeping must never throw */ }
+        });
+        this.bot.on('soundEffectHeard', (soundName, position) => {
+            // Humanlike startle: flinch and look toward loud sounds
+            // (explosions, lightning, withers...). Never throws.
+            handleSound(this, soundName, position).catch(() => {});
         });
         this.bot.on('kicked', (reason) => {
             if (!this._disconnectHandled) {
@@ -798,6 +1052,13 @@ export class Agent {
         this.bot.on('messagestr', async (message, _, jsonMsg) => {
             if (jsonMsg.translate && jsonMsg.translate.startsWith('death') && message.startsWith(this.name)) {
                 console.log('Agent died: ', message);
+                try { this.metrics?.setLastCause(causeFromDeathMessage(message, this.name)); } catch { /* optional */ }
+                try {
+                    const dpos = this.bot.entity?.position;
+                    if (dpos) {
+                        this.mental_map?.note(dpos, { name: 'last-death', type: 'death', source: 'observed', notes: causeFromDeathMessage(message, this.name) });
+                    }
+                } catch { /* mental map must never break death handling */ }
                 let death_pos = this.bot.entity.position;
                 this.memory_bank.rememberPlace('last_death_position', death_pos.x, death_pos.y, death_pos.z);
                 let death_pos_text = null;
@@ -841,10 +1102,177 @@ export class Agent {
     }
 
     async update(delta) {
-        await this.bot.modes.update();
-        this.self_prompter.update(delta);
+        this.syncBehaviorState();
+        // Global pause (!pause): no self-directed behavior, but the bot
+        // still senses, tracks time, and answers chat.
+        if (!this._paused) {
+            await this.bot.modes.update();
+            this.self_prompter.update(delta);
+            // fire-and-forget: the loop is self-guarding (cooldown + _running flag)
+            this.autonomy?.tick?.().catch(() => {});
+        }
         this.observation_collector?.tick?.();
+        this.tickSocial();
+        this.trackMovement();
         await this.checkTaskDone();
+    }
+
+    /**
+     * Movement metrics (GO list): accumulate blocks walked (throttled) and
+     * flush dirty counters occasionally. Cheap, never throws.
+     */
+    async trackMovement() {
+        try {
+            const now = Date.now();
+            if (now - (this._last_move_tick ?? 0) < 1000) return;
+            this._last_move_tick = now;
+            // Suffocation detection (GO list): buried head -> stop pathing
+            // and push upward until clear. Complements unstuck mode.
+            try {
+                if (now - (this._last_suffocation_check ?? 0) > 2000) {
+                    this._last_suffocation_check = now;
+                    const { suffocationState } = await import('./sensors/awareness.js');
+                    const s = suffocationState(this.bot);
+                    if (s.suffocating && !this._suffocating) {
+                        this._suffocating = true;
+                        try { this.bot.pathfinder?.stop?.(); } catch { /* optional */ }
+                        try { this.bot.setControlState?.('jump', true); } catch { /* optional */ }
+                        this.attention?.recordEvent?.(this.bot.entity?.position?.x ?? 0, (this.bot.entity?.position?.y ?? 0) + 1, this.bot.entity?.position?.z ?? 0, 'suffocating');
+                        setTimeout(() => { try { this.bot?.setControlState?.('jump', false); } catch { /* ok */ } }, 900);
+                    } else if (!s.suffocating && this._suffocating) {
+                        this._suffocating = false;
+                    }
+                }
+            } catch { /* suffocation handling is advisory */ }
+            const pos = this.bot?.entity?.position;
+            if (pos && this._last_move_pos) {
+                const d = Math.hypot(pos.x - this._last_move_pos.x, pos.z - this._last_move_pos.z);
+                if (d > 0.5 && d < 32) { // ignore teleports/spawn jumps
+                    getMetrics(this)?.addDistance?.(d);
+                }
+            }
+            this._last_move_pos = pos ? { x: pos.x, z: pos.z } : null;
+            getMetrics(this)?.flushIfDirty?.();
+            // Item recovery after death (GO list): keep a rolling snapshot of
+            // what we carry so a death can record what dropped. Throttled by
+            // the 1s tick above; never throws.
+            if (now - (this._last_inv_snap_at ?? 0) > 5000) {
+                this._last_inv_snap_at = now;
+                try {
+                    const counts = {};
+                    for (const slot of this.bot?.inventory?.slots ?? []) {
+                        if (slot && slot.name) counts[slot.name] = (counts[slot.name] ?? 0) + (slot.count ?? 1);
+                    }
+                    if (Object.keys(counts).length > 0) this._last_inventory_snapshot = counts;
+                } catch { /* snapshot is advisory */ }
+            }
+        } catch { /* metrics are advisory */ }
+    }
+
+    /**
+     * Throttled social pass: record sightings in the persistent ledger,
+     * detect approach/departure/new-sighting events, and (rarely, bounded,
+     * respecting !stfu) whisper a contextual reaction. Advisory only — it
+     * never blocks the update loop.
+     */
+    tickSocial() {
+        try {
+            const now = Date.now();
+            if (now - (this._last_social_tick ?? 0) < 3000) return;
+            this._last_social_tick = now;
+            const bot = this.bot;
+            const self = bot?.entity?.position;
+            if (!self || !this.player_ledger) return;
+
+            const curr = {};
+            let nearestPlayer = null;
+            let nearestPlayerDist = Infinity;
+            for (const [username, p] of Object.entries(bot.players ?? {})) {
+                if (!p?.entity?.position || username === this.name) continue;
+                const d = p.entity.position.distanceTo(self);
+                curr[username] = d;
+                // movement history rides along with every sighting
+                this.player_ledger.sight(username, { dist: d, pos: p.entity.position });
+                if (d < nearestPlayerDist) { nearestPlayerDist = d; nearestPlayer = username; }
+            }
+
+            // Reaction to player actions (GO list): if we just took damage
+            // and a player is right on top of us, treat them as the likely
+            // attacker — trust penalty + a bounded, personality-toned remark.
+            try {
+                const health = typeof bot.health === 'number' ? bot.health : null;
+                if (health != null && this._prev_social_health != null
+                    && health < this._prev_social_health - 0.5
+                    && nearestPlayer && nearestPlayerDist <= 5
+                    && now - (this._last_harm_reaction ?? 0) > 20000) {
+                    this._last_harm_reaction = now;
+                    this.player_ledger.setTrust(nearestPlayer, 'hostile', { note: 'attacked me' });
+                    try { recordDangerSpot(this, { pos: self, reason: `hurt near ${nearestPlayer}` }); } catch { /* optional */ }
+                    if (this.canSpeakSocial?.()) {
+                        const tone = this.personality?.traits?.caution > 0.6 ? 'Hey! Back off, please.' : 'Ow — why?';
+                        try { bot.whisper(nearestPlayer, tone); } catch { /* optional */ }
+                    }
+                }
+                if (health != null) this._prev_social_health = health;
+            } catch { /* harm reactions are advisory */ }
+
+            const events = detectSocialEvents(this._social_prev ?? {}, curr);
+            this._social_prev = curr;
+
+            for (const ev of events) {
+                if (!this._social_gate?.allow(ev.kind, ev.name)) continue;
+                const entry = this.player_ledger.get(ev.name);
+                const msg = reactionMessage(ev, entry, { personality: this.personality });
+                if (msg && this.canSpeakSocial()) {
+                    try { bot.whisper(ev.name, msg); }
+                    catch { try { this.openChat(msg); } catch { void 0; } }
+                }
+            }
+
+            if (events.length && now - (this._last_ledger_save ?? 0) > 10000) {
+                this._last_ledger_save = now;
+                this.player_ledger.persist();
+            }
+        } catch { /* the social layer is advisory; never break the update loop */ }
+    }
+
+    /** Whether social reactions may speak right now. */
+    canSpeakSocial() {
+        if (this.shut_up) return false;
+        try { if (convoManager.inConversation()) return false; } catch { void 0; }
+        const cfg = settings.social ?? {};
+        return cfg.greetings !== false;
+    }
+
+    /**
+     * Keep the humanlike behavior state machine honest by mirroring what the
+     * action manager is doing. This never drives actions itself — modes and
+     * skills consult it for context-dependent idle/reaction behavior.
+     */
+    syncBehaviorState() {
+        try {
+            const fsm = this.behavior_state;
+            if (!fsm) return;
+            const label = this.actions?.currentActionLabel;
+            if (!this.isIdle() && label) {
+                if (fsm.current === 'idle' || fsm.current === 'observe' || fsm.current === 'decide') {
+                    fsm.beginActivity(label);
+                    this.last_activity_change = Date.now();
+                } else if (fsm.activity !== label && (fsm.current === 'act' || fsm.current === 'verify')) {
+                    fsm.activity = label;
+                }
+            } else if (this.isIdle() && fsm.current === 'act') {
+                fsm.finish(true);
+                this.last_activity_change = Date.now();
+            } else if (this.isIdle() && fsm.current === 'verify') {
+                fsm.finish(true);
+            }
+        } catch (e) { /* the FSM is advisory; never break the update loop */ }
+    }
+
+    /** Milliseconds since the last activity started/finished transition. */
+    idleForMs() {
+        return Date.now() - (this.last_activity_change ?? Date.now());
     }
 
     isIdle() {
@@ -860,6 +1288,7 @@ export class Agent {
         this.history.traceEvent('lifecycle_event', { message: msg, exit_code: code });
         this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.');
         this.history.save();
+        try { markCleanShutdown(this.name || 'bot'); } catch { /* best effort */ }
         process.exit(code);
     }
     async checkTaskDone() {

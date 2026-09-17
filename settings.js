@@ -99,13 +99,63 @@ const settings = {
         "volatile_half_life_ms": 120000, // confidence halves every 2 minutes unseen
         "village_radius": 48,      // block grid size for merging villager sightings
         "summary_max_lines": 40,   // facts injected into planner prompts
+        "adapter": null            // optional storage adapter for the world model store ({read, write, remove}); null = JSON file
+    },
+
+    // Structured JSONL event logs (bots/<name>/events.jsonl): navigation,
+    // perception, planning, inventory, building, world-model, combat events.
+    "structured_logs": {
+        "enabled": true,
+        "categories": null         // null = all; or e.g. ["navigation", "error"]
+    },
+
+    // Resource priorities: which ores/resources to prefer when several
+    // compete (mining target order), and general resource policy.
+    "resources": {
+        "priority": [
+            "ancient_debris", "diamond_ore", "deepslate_diamond_ore", "emerald_ore",
+            "gold_ore", "deepslate_gold_ore", "iron_ore", "deepslate_iron_ore",
+            "redstone_ore", "deepslate_redstone_ore", "lapis_ore", "copper_ore",
+            "coal_ore", "deepslate_coal_ore"
+        ]
+    },
+
+    // Building profiles: how carefully the bot builds.
+    "building": {
+        "profile": "standard"      // meticulous | standard | fast
+    },
+
+    // Confirmation for risky actions: commands like !digDown or !attack ask
+    // for an explicit "confirm" before executing when this is on.
+    "confirm_risky_actions": false,
+
+    // Per-world configuration overrides, merged over the matching settings
+    // keys when the bot is on that server host (or "any" for all worlds).
+    // Example: "worlds": { "localhost": { "autonomy": { "enabled": false } } }
+    "worlds": {},
+
+    // Navigation: hazard-aware movement, route caching, and frontier exploration.
+    // See src/agent/navigation/.
+    "navigation": {
+        "route_variety": 0.1,       // chance of taking a near-equivalent alternate route (humanlike, hazard-aware profiles)
+        "route_cache": {
+            "enabled": true,        // remember successful routes and replay them (verified against the world first)
+            "ttl_minutes": 15,      // cached routes older than this are ignored
+            "max_entries": 64       // bounded LRU-style prune
+        },
+        "exploration": {
+            "default_legs": 3,      // outward trips per !explore when no count is given
+            "max_ring": 12,         // frontier ring cap (ring * 16 blocks out)
+            "profile": "legit",     // movement profile used while exploring
+            "exploration_profile": "standard" // cautious | standard | bold — how far/boldly the bot ranges out
+        }
     },
 
     // Humanlike locomotion layered on top of mineflayer-pathfinder (the mineflayer
     // equivalent of Baritone). Removes robotic movement tells: instant head snaps
     // with a perfectly level stare, nonstop sprinting, zero reaction time, and a
-    // frozen stance while idle. Digging, building, combat and scripted lookAt calls
-    // are never affected.
+    // frozen stance while idle. Interaction timing (dig/place/equip/chest) is
+    // humanized separately by src/agent/humanlike/interaction.js.
     "humanlike": {
         "enabled": true,          // master switch; can also be toggled at runtime via bot.humanizer.setEnabled()
         "smooth_gaze": true,      // ease/rate-limit head turns, add micro-jitter and natural vertical gaze wander
@@ -124,6 +174,71 @@ const settings = {
         "idle_max_s": 10,         // max seconds between idle glances
         "idle_arm_swing": false,  // occasionally swing the arm while idle (off by default)
         "external_look_hold_ms": 2500, // don't idle-glance for this long after a scripted look/lookAt
+
+        // ---- deliberate behavior layer (seeded, bounded; see src/agent/humanlike/) ----
+        "seed": null,             // optional fixed seed; defaults to a hash of the bot's name
+        "personality": {
+            "preset": "default",  // default | curious | cautious | energetic | laidback | social | guardian | greeter | scout | worker
+            "overrides": {}       // exact trait values, e.g. { "curiosity": 0.9 }
+        },
+        "interaction": {
+            "enabled": true,                 // humanize dig/place/equip/chest timing & focus
+            "focus_before_action": true,     // glance at the block before digging/placing
+            "focus_dwell_ms": [120, 450],    // pre-action glance hold
+            "focus_offset": 0.18,            // bounded glance imprecision (blocks)
+            "dig_pause_ms": [80, 280],
+            "place_pause_ms": [60, 220],
+            "equip_pause_ms": [50, 250],
+            "window_pause_ms": [150, 450],
+            "post_action_pause_ms": [60, 200]
+        },
+        "idle": {
+            "enabled": true,
+            "wander": true,         // short walks to a safe nearby spot when idle a while
+            "inspect": true,        // occasionally "check the bag" (look-down pause)
+            "min_idle_ms": 5000,    // settle before idling after an activity
+            "wander_after_ms": 12000,
+            "radius": 4
+        }
+    },
+
+    // Social behavior (src/agent/social/): persistent player ledger plus
+    // bounded approach/departure reactions whispered to the other player.
+    "social": {
+        "greetings": true  // master switch for contextual social reactions
+    },
+
+    // Autonomous task loop (src/agent/autonomy/). While the bot is idle it
+    // periodically scores its needs and acts on the most urgent one through
+    // the normal action manager, so everything stays interruptible.
+    "autonomy": {
+        "enabled": true,            // master switch; !setAutonomy toggles it at runtime
+        "cooldown_s": [20, 60],     // personality-paced seconds between loop runs
+        "action_timeout_s": 180,    // hard cap on a single autonomous action
+        "history_limit": 16,        // bounded history kept for !autonomyStatus
+        // Scheduled tasks: [{ "at": "dawn"|"dusk"|"HH:MM", "do": "<need kind>" }]
+        // e.g. [{ "at": "dawn", "do": "farm" }] — runs once per Minecraft day.
+        "scheduled": [],
+        "needs": {
+            "tool_replace_threshold": 0.15, // durability fraction that triggers replacement
+            "explore_when_idle": true,      // frontier-explore when idle long enough
+            "explore_idle_s": 60,           // seconds of idle before exploring
+            "explore_legs": 2,              // outward legs per autonomous exploration
+            "free_slot_alert": 2,           // unload to storage when <= this many free slots
+            "min_torches": 8,               // self-maintain at least this many torches
+            "min_food": 5,                  // self-maintain at least this many edible items
+            "max_unload_types": 8,          // item types deposited per unload run
+            "farm_radius": 16,              // blocks to scan for crops / farmland
+            "max_harvest": 16,              // crops harvested per farming run
+            "max_plants": 24,               // seeds planted per farming run
+            "max_till": 4,                  // new farmland plots tilled per run (base-scale farm growth)
+            "farm_expand": true,            // till+plant new plots when seeds remain but farmland runs out
+            "breed_radius": 16,             // blocks to scan for breedable animals
+            "max_breed_pairs": 2,           // animal pairs fed per husbandry run
+            "maintain_radius": 8,           // blocks around home scanned for dark spots
+            "return_home_after_errand": true, // walk back to home after wandering errands (explore/farm/unload/patrol)
+            "patrol_pois": []              // named circuit of mental-map POIs (or "home"); >=2 entries enables patrol need
+        }
     },
 
 

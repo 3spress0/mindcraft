@@ -23,9 +23,28 @@ or `.litematic` first.
 - `!buildSchematic <name>` — build next to the bot on flat ground
 - `!buildSchematic <name> <x> <y> <z> <rotation>` — build at explicit world
   coordinates (corner = ground level), `rotation` is 0–3 (90° steps)
+- `!saveArea <name> <x1> <y1> <z1> <x2> <y2> <z2>` — capture a box of the
+  live world and write it into this folder as a real `<name>.litematic`, so it
+  can be listed, quoted, rebuilt, or opened in the Litematica mod
+- `!saveAreaSchem <name> <x1> <y1> <z1> <x2> <y2> <z2>` — same capture, saved
+  as Sponge/WorldEdit `<name>.schem` (also the format Baritone builds natively)
 
 If materials run out, the build pauses, remembers its position, and continues
 where it left off when you run `!buildSchematic <name>` again after gathering.
+
+## Capturing builds from the world
+
+`!saveArea` is the inverse of building: pick two opposite corners of a box
+(order doesn't matter) and the bot writes every block — including block-state
+properties like stair orientation — into a gzip-compressed `.litematic` with a
+proper block-state palette and packed bit arrays. Captures are capped
+(262144 blocks / 256 per edge by default) so a mistyped coordinate can't
+produce a gigabyte file. The saved build immediately shows up in `!listBuilds`
+and can be rebuilt elsewhere with `!buildSchematic`.
+
+Both export formats share the same capture: `.litematic` for Litematica users,
+`.schem` (Sponge spec v2: palette of full block-state strings + LEB128 varint
+block data) for WorldEdit/Baritone users.
 
 ## Tips
 
