@@ -128,15 +128,31 @@ describe('survival benchmark: a simulated week of decisions', () => {
         assert.equal(choice, 'restock_torches');
     });
 
-    it('night with hostiles — a held risky action is recorded in history', async () => {
+    it('night with hostiles — an overwhelming pack triggers reactive escape', async () => {
         const agent = makeAgent({
             time: 18000, idleMs: 120000,
             hostiles: [{ name: 'zombie', x: 7 }, { name: 'skeleton', x: 0, z: 9 }, { name: 'creeper', x: 4, z: 4 }],
             slots: [item('bread', 9, 5)] // food fine, no torch materials -> nothing safe to run
         });
         const { choice, loop } = await tickOnce(agent);
+        // threat score of this pack is overwhelming -> the combat guard flees
+        // instead of planning chores (combat FSM + escape flow). Escape runs
+        // outside the need executors, so CHOICES stays empty.
+        assert.equal(loop.lastCombat?.phase, 'fleeing');
+        assert.equal(choice, null);
+        assert.equal(loop.lastRun?.kind, 'escape');
+        assert.ok(agent.ran.includes('autonomy:escape'), 'escape should run through the action manager');
+    });
+
+    it('night with two hostiles — risky work held, recorded in history', async () => {
+        const agent = makeAgent({
+            time: 18000, idleMs: 120000,
+            hostiles: [{ name: 'zombie', x: 7 }, { name: 'skeleton', x: 0, z: 9 }],
+            slots: [item('bread', 9, 5)] // food fine, no torch materials -> nothing safe to run
+        });
+        const { choice, loop } = await tickOnce(agent);
         assert.equal(loop.lastRisk.level, 'high');
-        assert.equal(choice, null); // nothing safe executed
+        assert.equal(choice, null); // engaged: nothing safe executed
         // explore was a candidate but held
         const held = loop.history.find(h => h.result?.startsWith('held'));
         assert.ok(held, 'expected a held entry');

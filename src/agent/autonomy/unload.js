@@ -65,6 +65,12 @@ export function itemsToUnload(bot, { maxTypes = 8 } = {}) {
 export async function executeInventoryUnload(agent, need, cfg = {}) {
     const bot = agent?.bot;
     if (!bot) return 'unload: no bot';
+    // Contextual interaction choice (GO list): fumbling with chests mid-fight
+    // is a bad idea — hold the unload until the fight is over.
+    try {
+        const phase = bot._combat_state?.phase;
+        if (phase === 'engaged' || phase === 'fleeing') return 'unload: held — combat in progress';
+    } catch { /* advisory */ }
     const maxTypes = Math.max(1, Math.min(16, cfg.max_unload_types ?? 8));
 
     const list = itemsToUnload(bot, { maxTypes });

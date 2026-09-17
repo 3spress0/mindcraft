@@ -18,6 +18,14 @@ import { executeTidy } from '../storage/tidying.js';
 import { executeSort } from '../storage/sorting.js';
 import { resolvePatrolStops, executePatrol } from '../autonomy/patrol.js';
 import { planBreeding, executeBreeding } from '../autonomy/husbandry.js';
+import { wander } from '../navigation/exploration.js';
+import { escortPlayer } from '../autonomy/escort.js';
+import { prepareExpedition } from '../autonomy/expedition.js';
+import { pauseAll, resumeAll, cancelWithReason, pauseStatus } from '../library/pause.js';
+import { getReservations } from '../storage/reservations.js';
+import { previewPath } from '../baritone/baritone.js';
+import { GoalNear } from '../baritone/goals.js';
+import { asciiMap } from '../sensors/mapview.js';
 import { enterCave } from '../navigation/caves.js';
 import { executePortalTrip } from '../navigation/portals.js';
 import { decideEscape, executeEscape } from '../autonomy/combat.js';
@@ -402,16 +410,21 @@ export const actionsList = [
     },
     {
         name: '!mineBlocks',
-        description: 'Baritone-style #mine: find the nearest matching blocks, walk to each one and mine it with the best tool. Use for ores, logs, stone, etc.',
+        description: 'Baritone-style #mine: find the nearest matching blocks, walk to each one and mine it with the best tool. Lava-safe (refuses blocks with lava adjacent), stops when the inventory fills, and can walk back to the entrance afterwards. Give several types comma-separated to mine by priority (e.g. diamond_ore,iron_ore).',
         params: {
-            'block_type': { type: 'BlockName', description: 'The block type to mine, e.g. iron_ore, oak_log, stone.' },
+            'block_type': { type: 'string', description: 'Block type(s) to mine, e.g. iron_ore or diamond_ore,iron_ore (priority order).' },
             'num': { type: 'int', description: 'How many blocks to mine.', domain: [1, 512] },
+            'returnToEntrance': { type: 'string', description: '"yes" to walk back to the spot mining started from.' },
         },
-        perform: runAsAction(async (agent, block_type, num) => {
-            const res = await baritoneMineBlocks(agent.bot, block_type, num || 1, {
-                onProgress: (done, total) => skills.log(agent.bot, `Mined ${done}/${total} ${block_type}.`),
+        perform: runAsAction(async (agent, block_type, num, returnToEntrance) => {
+            const types = String(block_type ?? '').split(',').map(s => s.trim()).filter(Boolean);
+            const label = types.length === 1 ? types[0] : types.join('/');
+            const res = await baritoneMineBlocks(agent.bot, types[0], num || 1, {
+                types,
+                returnToEntrance: String(returnToEntrance ?? '').toLowerCase() === 'yes',
+                onProgress: (done, total) => skills.log(agent.bot, `Mined ${done}/${total} ${label}.`),
             });
-            skills.log(agent.bot, `Mining finished: ${res.mined}/${res.requested} ${block_type} (${res.reason}).`);
+            skills.log(agent.bot, `Mining finished: ${res.mined}/${res.requested} ${label} (${res.reason}).`);
         })
     },
     {
@@ -843,6 +856,7 @@ export const actionsList = [
                 await skills.goToPosition(agent.bot, poi.x, poi.y, poi.z, 3);
             }, {});
             if (code?.interrupted) return `Interrupted on the way to "${poi.name}".`;
+            try { map.bumpVisit(poi.name); } catch { /* preferences are advisory */ }
             return `Arrived at ${poi.type} "${poi.name}".`;
         }
     },
@@ -981,12 +995,15 @@ export const actionsList = [
     },
     {
         name: '!sortChest',
-        description: 'Fully sort the nearest chest (within 16 blocks) by category (tools/armor/food/resources/blocks), then item name, then stack size — using ordinary window clicks.',
-        perform: async function (agent) {
+        description: 'Fully sort the nearest chest (within 16 blocks) by category (tools/armor/food/resources/blocks), then item name, then stack size — using ordinary window clicks. Skips chests that are already tidy unless force is "yes".',
+        params: {
+            'force': { type: 'string', description: '"yes" to sort even when the chest is already tidy enough.' }
+        },
+        perform: async function (agent, force) {
             const chest = world.getNearestBlock(agent.bot, 'chest', 16);
             if (!chest) return 'No chest within 16 blocks — stand next to the chest to sort.';
             const code = await agent.actions.runAction('action:sortChest', async () => {
-                agent._sort_result = await executeSort(agent.bot, chest);
+                agent._sort_result = await executeSort(agent.bot, chest, { force: String(force ?? '').toLowerCase() === 'yes' });
             }, {});
             if (code?.interrupted) return 'Interrupted while sorting.';
             return agent._sort_result ?? 'Done sorting.';
@@ -1052,5 +1069,137 @@ export const actionsList = [
         perform: runAsAction(async (agent, tool_name, target) => {
             await skills.useToolOn(agent.bot, tool_name, target);
         })
+    },
+    {
+        name: '!pause',
+        description: 'Pause all autonomous behavior (modes, autonomy, self-prompting). The bot keeps listening and answering chat. Use !resume to continue.',
+        params: {},
+        perform: function (agent) {
+            pauseAll(agent);
+            return 'Paused. I will not act on my own until you say !resume.';
+        }
+    },
+    {
+        name: '!resume',
+        description: 'Resume autonomous behavior after a !pause.',
+        params: {},
+        perform: function (agent) {
+            const was = agent._paused;
+            resumeAll(agent);
+            return was ? 'Resumed — back to work.' : `I was not paused (${pauseStatus(agent)}).`;
+        }
+    },
+    {
+        name: '!cancel',
+        description: 'Cancel the current action with a reason, e.g. !cancel we need the wood for something else. Like !stop, but the reason is remembered.',
+        params: {
+            'reason': { type: 'string', description: 'Why the action is being cancelled.' }
+        },
+        perform: async function (agent, reason) {
+            return cancelWithReason(agent, String(reason ?? 'no reason given'));
+        }
+    },
+    {
+        name: '!wander',
+        description: 'Wander locally in a humanlike way: short legs with gentle turns, occasional pauses, no cliff walking. Optional leg count 1-8.',
+        params: {
+            'legs': { type: 'int', description: 'Number of wander legs (1-8). Defaults to 3.' }
+        },
+        perform: async function (agent, legs) {
+            const code = await agent.actions.runAction('action:wander', async () => {
+                agent._wander_result = await wander(agent, { legs: legs ?? 3 });
+            }, {});
+            if (code?.interrupted) return 'Wander interrupted.';
+            return agent._wander_result ?? 'Done wandering.';
+        }
+    },
+    {
+        name: '!escort',
+        description: 'Escort a player for up to 2 minutes: stay close, ready weapon/shield when threats appear, give up if they run too far ahead.',
+        params: {
+            'player': { type: 'string', description: 'Name of the player to escort.' }
+        },
+        perform: async function (agent, player) {
+            const code = await agent.actions.runAction('action:escort', async () => {
+                agent._escort_result = await escortPlayer(agent, player, {});
+            }, { timeout: 150 });
+            if (code?.interrupted) return 'Escort interrupted.';
+            return agent._escort_result ?? 'Escort done.';
+        }
+    },
+    {
+        name: '!kit',
+        description: 'Prepare an expedition kit: check food/tools/torches against the trip kind (generic, mining, exploring, caving), craft torches when possible, and report gaps.',
+        params: {
+            'kind': { type: 'string', description: 'Trip kind: generic | mining | exploring | caving.' }
+        },
+        perform: async function (agent, kind) {
+            const code = await agent.actions.runAction('action:kit', async () => {
+                agent._kit_result = await prepareExpedition(agent, { kind: kind ?? 'generic' });
+            }, {});
+            if (code?.interrupted) return 'Kit preparation interrupted.';
+            return agent._kit_result ?? 'Kit checked.';
+        }
+    },
+    {
+        name: '!reserveResource',
+        description: 'Reserve a quantity of an item for a project so background flows do not spend it, e.g. !reserveResource iron_ingot 16. Use release as holder action to free it.',
+        params: {
+            'item': { type: 'string', description: 'Item name to reserve.' },
+            'qty': { type: 'int', description: 'Quantity to reserve.' },
+            'holder': { type: 'string', description: 'Who the reservation is for (defaults to "self").' }
+        },
+        perform: function (agent, item, qty, holder) {
+            if (!item || !(Number(qty) > 0)) return 'Usage: !reserveResource <item> <qty> [holder]';
+            const reg = getReservations(agent);
+            if (!reg) return 'No reservations registry.';
+            const res = reg.reserve(item, qty, holder || 'self');
+            if (!res.ok) return `Could not reserve: ${res.reason}`;
+            return `Reserved ${qty}x ${item} for ${holder || 'self'} (6h TTL). !reservations lists all.`;
+        }
+    },
+    {
+        name: '!clearArea',
+        description: 'Terrain preparation: clear every block inside a box (two opposite corners), keeping the floor plane — e.g. flatten a build site before !buildSchematic. Bounded at 256 blocks per call.',
+        params: {
+            'x1': { type: 'int', description: 'Corner 1 x.' }, 'y1': { type: 'int', description: 'Corner 1 y.' }, 'z1': { type: 'int', description: 'Corner 1 z.' },
+            'x2': { type: 'int', description: 'Corner 2 x.' }, 'y2': { type: 'int', description: 'Corner 2 y.' }, 'z2': { type: 'int', description: 'Corner 2 z.' }
+        },
+        perform: runAsAction(async (agent, x1, y1, z1, x2, y2, z2) => {
+            const res = await skills.clearArea(agent.bot, { x: x1, y: y1, z: z1 }, { x: x2, y: y2, z: z2 }, {});
+            skills.log(agent.bot, `Cleared ${res.cleared} block(s), skipped ${res.skipped} (${res.reason}).`);
+        })
+    },
+    {
+        name: '!showPath',
+        description: 'Preview AND visualize a path to coordinates without walking it: dry-run the route, draw it on the ASCII map, and save the waypoint list to bots/<name>/path_preview.json.',
+        params: {
+            'x': { type: 'int', description: 'Target x.' },
+            'y': { type: 'int', description: 'Target y.' },
+            'z': { type: 'int', description: 'Target z.' }
+        },
+        perform: function (agent, x, y, z) {
+            if (x == null || y == null || z == null) return 'Usage: !showPath <x> <y> <z>';
+            try {
+                const result = previewPath(agent.bot, new GoalNear(x, y, z, 2), { includeWaypoints: true });
+                const found = result?.ok ?? false;
+                const waypoints = result?.waypoints ?? [];
+                let viz = '';
+                try { viz = asciiMap(agent, { radius: 24, path: waypoints }); } catch { viz = ''; }
+                try {
+                    const dir = path.join('bots', agent?.bot?.username ?? agent?.name ?? 'bot');
+                    fs.mkdirSync(dir, { recursive: true });
+                    fs.writeFileSync(path.join(dir, 'path_preview.json'), JSON.stringify({
+                        target: { x, y, z }, found, length: result?.length ?? waypoints.length, waypoints
+                    }, null, 2));
+                } catch { /* visualization file is optional */ }
+                const head = found
+                    ? `Path preview to (${x}, ${y}, ${z}): exists, ${waypoints.length} waypoints.`
+                    : `Path preview to (${x}, ${y}, ${z}): no route found.`;
+                return `${head}\n${viz}\nWaypoints saved to bots/<name>/path_preview.json.`;
+            } catch (e) {
+                return `Path preview failed: ${e.message}`;
+            }
+        }
     },
 ];

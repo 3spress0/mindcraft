@@ -73,7 +73,9 @@ export function scoreThreats(bot, { radius = 16, hostiles = null } = {}) {
             threats.push({
                 name: entity.name,
                 dist: Math.round(dist * 10) / 10,
-                score: Math.round((base ?? DEFAULT_THREAT) * distanceFactor(dist) * 100) / 100
+                score: Math.round((base ?? DEFAULT_THREAT) * distanceFactor(dist) * 100) / 100,
+                x: Math.round(entity.position.x),
+                z: Math.round(entity.position.z)
             });
         }
     }
@@ -138,6 +140,59 @@ export function decideEscape(bot, { healthThreshold = 6, overwhelmAt = 4.5, radi
     if (health <= healthThreshold) return { flee: true, reason: `health ${Math.round(health)}/20` };
     if (total >= overwhelmAt || level === 'overwhelm') return { flee: true, reason: `threat score ${total} (${level})` };
     return { flee: false, reason: `health ${Math.round(health)}/20, threat ${total} (${level})` };
+}
+
+/**
+ * Combat state tracking: a tiny finite-state machine (idle -> engaged ->
+ * fleeing -> idle) maintained from server-reported health and threats.
+ * Idempotent — call as often as you like; the phase only flips when the
+ * situation actually changes.
+ * @param {object} bot
+ * @param {object} [opts] { radius, healthThreshold, overwhelmAt, now }
+ * @returns {{phase, since, total, level, health, lastDamageTaken, lastDamageAt}}
+ */
+export function updateCombatState(bot, { radius = 16, healthThreshold = 6, overwhelmAt = 4.5, now = Date.now() } = {}) {
+    const st = bot._combat_state ??= {
+        phase: 'idle', since: now, lastHealth: null,
+        lastDamageTaken: 0, lastDamageAt: 0
+    };
+    // damage bookkeeping from the health delta (server-reported, no packets)
+    const health = typeof bot?.health === 'number' ? bot.health : null;
+    if (health != null && st.lastHealth != null && health < st.lastHealth) {
+        st.lastDamageTaken = Math.round((st.lastHealth - health) * 10) / 10;
+        st.lastDamageAt = now;
+    }
+    if (health != null) st.lastHealth = health;
+
+    const { total, level } = scoreThreats(bot, { radius });
+    const escape = decideEscape(bot, { healthThreshold, overwhelmAt, radius });
+    const recentlyHurt = now - st.lastDamageAt < 8000;
+
+    let phase;
+    if (escape.flee) phase = 'fleeing';
+    else if (total >= 2 || level === 'danger' || (recentlyHurt && total > 0)) phase = 'engaged';
+    else phase = 'idle';
+
+    if (phase !== st.phase) {
+        st.phase = phase;
+        st.since = now;
+    }
+    return {
+        phase: st.phase,
+        since: st.since,
+        total,
+        level,
+        health: health ?? 20,
+        lastDamageTaken: st.lastDamageTaken,
+        lastDamageAt: st.lastDamageAt
+    };
+}
+
+/** One-line combat-state digest for status queries and logs. */
+export function combatStateLine(state) {
+    if (!state) return 'combat: unknown';
+    const secs = Math.max(0, Math.round((Date.now() - state.since) / 1000));
+    return `combat: ${state.phase} for ${secs}s (threat ${state.total}/${state.level}, health ${Math.round(state.health)}/20)`;
 }
 
 /**

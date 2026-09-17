@@ -20,6 +20,14 @@ import { listCaves } from '../navigation/caves.js';
 import { listPortals, planPortalTrip, notePortalsIfNear } from '../navigation/portals.js';
 import { listSharedBases } from '../navigation/shared_bases.js';
 import { dangerReport } from '../sensors/danger.js';
+import { soundReport } from '../sensors/awareness.js';
+import { asciiMap } from '../sensors/mapview.js';
+import { safeSpotsReport, dangerSpotsReport } from '../navigation/safe_zones.js';
+import { reservationsReport } from '../storage/reservations.js';
+import { summarizeProject } from '../planning/analysis.js';
+import { getLogger } from '../library/structlog.js';
+import { crashGuardStatus } from '../library/crash_guard.js';
+import { pauseStatus } from '../library/pause.js';
 import * as skills from '../library/skills.js';
 import { toolsReport } from '../library/durability.js';
 
@@ -746,6 +754,107 @@ export const queryList = [
                 `- ${b.owner} — ${b.kind} "${b.name}" at (${b.x}, ${b.y}, ${b.z})`
             );
             return pad('Shared bases:\n' + lines.join('\n'));
+        }
+    },
+    {
+        name: '!safeSpots',
+        description: 'Scan for safe standing spots nearby (solid ground, headroom, no hazards, light/cover) and list remembered safe places.',
+        params: {},
+        perform: function (agent) {
+            try { return pad(safeSpotsReport(agent, { radius: 8 })); }
+            catch (e) { return pad(`Could not scan safe spots: ${e.message}`); }
+        }
+    },
+    {
+        name: '!dangerSpots',
+        description: 'List remembered dangerous places (where the bot got hurt or saw concentrated danger).',
+        params: {},
+        perform: function (agent) {
+            try { return pad(dangerSpotsReport(agent)); }
+            catch (e) { return pad(`Could not list danger spots: ${e.message}`); }
+        }
+    },
+    {
+        name: '!reservations',
+        description: 'List resource reservations (item quantities claimed for a project/holder).',
+        params: {},
+        perform: function (agent) {
+            try { return pad(reservationsReport(agent)); }
+            catch (e) { return pad(`Could not list reservations: ${e.message}`); }
+        }
+    },
+    {
+        name: '!planSummary',
+        description: 'A natural-language summary of the active plan: progress, current step, confidence, and missing resources.',
+        params: {},
+        perform: function (agent) {
+            try {
+                const project = agent.plan_runner?.project ?? null;
+                return pad(summarizeProject(project));
+            } catch (e) {
+                return pad(`Could not summarize plan: ${e.message}`);
+            }
+        }
+    },
+    {
+        name: '!listen',
+        description: 'Report sounds heard recently (server sound events: explosions, thunder, hurts, portals...).',
+        params: {},
+        perform: function (agent) {
+            try { return pad('Sounds: ' + soundReport(agent.bot, { windowMs: 20000 })); }
+            catch (e) { return pad(`Could not read sounds: ${e.message}`); }
+        }
+    },
+    {
+        name: '!map',
+        description: 'Draw an ASCII top-down map of the surroundings: hazards, mobs, players, remembered POIs. Optional radius 8-32.',
+        params: {
+            'radius': { type: 'int', description: 'Map radius in blocks (8-32). Defaults to 16.' }
+        },
+        perform: function (agent, radius) {
+            try { return pad(asciiMap(agent, { radius: radius ?? 16 })); }
+            catch (e) { return pad(`Could not draw map: ${e.message}`); }
+        }
+    },
+    {
+        name: '!debug',
+        description: 'Debug suite. Subcommands: state (structured state digest), log [category] (recent structured events), crash (crash-guard status), pause (pause status).',
+        params: {
+            'what': { type: 'string', description: 'state | log | crash | pause' },
+            'arg': { type: 'string', description: 'For log: optional category filter (navigation, planning, error...).' }
+        },
+        perform: function (agent, what, arg) {
+            const which = String(what ?? 'state').toLowerCase();
+            try {
+                if (which === 'crash') {
+                    return pad(crashGuardStatus(agent?.bot?.username ?? agent?.name ?? 'bot'));
+                }
+                if (which === 'pause') {
+                    return pad(`Global pause: ${pauseStatus(agent)}`);
+                }
+                if (which === 'log') {
+                    const logger = getLogger(agent);
+                    if (!logger) return pad('Structured logs unavailable.');
+                    const events = logger.tail(12, { category: arg || null });
+                    if (!events.length) return pad(arg ? `No "${arg}" events logged.` : 'No structured events logged yet.');
+                    const lines = events.map(e => {
+                        const data = { ...e }; delete data.t; delete data.category; delete data.event;
+                        const extra = Object.entries(data).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ');
+                        return `- [${e.category}] ${e.event}${extra ? ` ${extra}` : ''}`;
+                    });
+                    return pad('Structured events (recent):\n' + lines.join('\n'));
+                }
+                // state digest
+                const lines = ['DEBUG STATE'];
+                lines.push(`Pause: ${pauseStatus(agent)}`);
+                lines.push(crashGuardStatus(agent?.bot?.username ?? agent?.name ?? 'bot'));
+                try { lines.push(agent.autonomy?.summarize?.()?.split('\n')[0] ?? 'autonomy: n/a'); } catch { /* optional */ }
+                const logger = getLogger(agent);
+                if (logger) lines.push(`Log file: ${logger.filePath()}`);
+                return pad(lines.join('\n'));
+            } catch (e) {
+                return pad(`Debug failed: ${e.message}`);
+            }
         }
     },
 ];

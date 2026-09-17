@@ -83,6 +83,11 @@ export async function buildSchematic(agent, name, position = null, orientation =
 
     // Register it so the NPC goal system can resume/repair it by name too.
     agent.npc.constructions[entry.key] = goal;
+    // structured building log: build registered/started
+    try {
+        const { logEvent } = await import('../library/structlog.js');
+        logEvent(agent, 'building', 'build_start', { name: entry.key, blocks: goal?.blocks?.length ?? null });
+    } catch { /* logging advisory */ }
 
     if (orientation === null || orientation === undefined) {
         const prev = agent.npc.data.built[entry.key];

@@ -13,6 +13,7 @@ import path from 'path';
 
 export const TRUST = { FRIEND: 'friend', NEUTRAL: 'neutral', HOSTILE: 'hostile' };
 export const MAX_PLAYERS = 128;
+export const MAX_POSITIONS = 16; // movement-history ring per player
 
 function normalizeName(name) {
     return String(name ?? '').trim().toLowerCase();
@@ -51,14 +52,40 @@ export class PlayerLedger {
     }
 
     /** Record a sighting; updates lastSeen, sightings, distance. */
-    sight(name, { dist = null } = {}) {
+    sight(name, { dist = null, pos = null } = {}) {
         const e = this._entry(name);
         if (!e) return null;
         const t = this._now();
         e.lastSeen = t;
         e.sightings += 1;
         if (typeof dist === 'number') e.lastDist = Math.round(dist * 10) / 10;
+        // Player movement history (GO list): a bounded ring of positions,
+        // deduped against tiny jitter so it tracks real movement.
+        if (pos && typeof pos.x === 'number' && typeof pos.z === 'number') {
+            if (!Array.isArray(e.positions)) e.positions = [];
+            const last = e.positions[e.positions.length - 1];
+            const moved = !last || Math.hypot(pos.x - last.x, pos.z - last.z) >= 2;
+            if (moved) {
+                e.positions.push({ t, x: Math.round(pos.x), z: Math.round(pos.z) });
+                if (e.positions.length > MAX_POSITIONS) e.positions.splice(0, e.positions.length - MAX_POSITIONS);
+            } else {
+                last.t = t;
+            }
+        }
         return e;
+    }
+
+    /** Bounded movement history for a player (newest last). */
+    movementHistory(name) {
+        return this.get(name)?.positions ?? [];
+    }
+
+    /** Coarse heading from the two most recent positions, or null. */
+    heading(name) {
+        const hist = this.movementHistory(name);
+        if (hist.length < 2) return null;
+        const [a, b] = hist.slice(-2);
+        return Math.round(Math.atan2(b.z - a.z, b.x - a.x) * 180 / Math.PI);
     }
 
     /** Set trust explicitly ('friend' | 'neutral' | 'hostile'). */

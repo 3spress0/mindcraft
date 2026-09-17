@@ -83,6 +83,10 @@ export class PlanStep {
         this.parentId = data.parentId || null;
         this.dependsOn = Array.isArray(data.dependsOn) ? [...data.dependsOn] :
             (Array.isArray(data.depends_on) ? [...data.depends_on] : []);
+        // Priority handling (GO list): urgent steps jump ahead of normal
+        // work, background steps only run when nothing else is pending.
+        const prio = String(data.priority || 'normal').toLowerCase();
+        this.priority = ['urgent', 'normal', 'background'].includes(prio) ? prio : 'normal';
         this.status = data.status || STEP.PENDING;
         this.attempts = data.attempts || 0;
         this.observation = data.observation || null;
@@ -106,6 +110,7 @@ export class PlanStep {
             phaseId: this.phaseId,
             parentId: this.parentId,
             dependsOn: this.dependsOn,
+            priority: this.priority,
             status: this.status,
             attempts: this.attempts,
             observation: this.observation,
@@ -211,7 +216,10 @@ export class Project {
             s.status === STEP.DONE || s.status === STEP.SKIPPED).map((s) => s.id));
         const runnable = this.leaves().filter((s) =>
             s.isOpen() && s.dependsOn.every((dep) => satisfied.has(dep)));
+        const PRIO = { urgent: 0, normal: 1, background: 2 };
         runnable.sort((a, b) => {
+            const pr = (PRIO[a.priority] ?? 1) - (PRIO[b.priority] ?? 1);
+            if (pr !== 0) return pr;
             const po = this.phaseOrder(a.phaseId) - this.phaseOrder(b.phaseId);
             if (po !== 0) return po;
             return this.steps.indexOf(a) - this.steps.indexOf(b);
@@ -566,9 +574,34 @@ export class ProjectStore {
         this.fp = path.join(this.dir, 'active_project.json');
     }
 
+    checkpointPath() {
+        return path.join(this.dir, 'plan_checkpoint.json');
+    }
+
     save(project) {
         fs.mkdirSync(this.dir, { recursive: true });
-        fs.writeFileSync(this.fp, JSON.stringify(project.toJSON(), null, 2));
+        // atomic write: a crash mid-save must not corrupt the project
+        const tmp = `${this.fp}.${process.pid}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(project.toJSON(), null, 2));
+        fs.renameSync(tmp, this.fp);
+    }
+
+    /** Persist a lightweight progress checkpoint (see runner.writeCheckpoint). */
+    saveCheckpoint(checkpoint) {
+        fs.mkdirSync(this.dir, { recursive: true });
+        const fp = this.checkpointPath();
+        const tmp = `${fp}.${process.pid}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(checkpoint, null, 2));
+        fs.renameSync(tmp, fp);
+    }
+
+    loadCheckpoint() {
+        try {
+            if (!fs.existsSync(this.checkpointPath())) return null;
+            return JSON.parse(fs.readFileSync(this.checkpointPath(), 'utf8'));
+        } catch {
+            return null;
+        }
     }
 
     load() {
@@ -584,6 +617,7 @@ export class ProjectStore {
     clear() {
         try {
             if (fs.existsSync(this.fp)) fs.unlinkSync(this.fp);
+            if (fs.existsSync(this.checkpointPath())) fs.unlinkSync(this.checkpointPath());
         } catch (err) {
             console.error(`[planning] failed to clear project file: ${err.message}`);
         }

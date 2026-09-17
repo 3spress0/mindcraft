@@ -64,6 +64,42 @@ export function hazardExposure(waypoints, hazards, { corridor = 4, sampleEvery =
 }
 
 /**
+ * Hostile exposure of a route: sum of threat scores for hostiles sitting
+ * within `corridor` of sampled route points (GO list: hostile-mob
+ * avoidance, safe route scoring). Threats carry their combat.js score, so a
+ * creeper next to the path hurts more than a distant skeleton.
+ * @param {Array} waypoints
+ * @param {Array} threats [{x, z, score}]
+ * @returns {{score, samples, exposed}}
+ */
+export function threatExposure(waypoints, threats, { corridor = 8, sampleEvery = 2 } = {}) {
+    const pts = waypoints ?? [];
+    const th = threats ?? [];
+    if (!pts.length || !th.length) return { score: 0, samples: 0, exposed: 0 };
+    let score = 0;
+    let samples = 0;
+    let exposed = 0;
+    for (let i = 0; i < pts.length; i += Math.max(1, sampleEvery)) {
+        const p = pts[i];
+        samples++;
+        let worst = 0;
+        for (const t of th) {
+            const d = dist2D(p.x, p.z, t.x, t.z);
+            if (d <= corridor) {
+                // threat decays linearly with distance inside the corridor
+                const decayed = (t.score ?? 1) * (1 - d / (corridor + 1e-9));
+                if (decayed > worst) worst = decayed;
+            }
+        }
+        if (worst > 0) {
+            exposed++;
+            score += worst;
+        }
+    }
+    return { score: Math.round(score * 10) / 10, samples, exposed };
+}
+
+/**
  * Choose the safest route among candidates.
  * @param {Array<{waypoints}>} routes
  * @param {Array} hazards  [{x, z, tier|name}]
@@ -71,20 +107,23 @@ export function hazardExposure(waypoints, hazards, { corridor = 4, sampleEvery =
  * @returns {{chosen, index, scores}} — scores[i] = length + riskWeight*exposure
  */
 /**
- * Score candidate routes by length + hazard exposure and pick one.
- * With `rng` + `varietyChance`, a near-equivalent alternative is occasionally
- * preferred instead — same safety class, less robotic repetition.
+ * Score candidate routes by length + hazard exposure + hostile exposure and
+ * pick one. With `rng` + `varietyChance`, a near-equivalent alternative is
+ * occasionally preferred instead — same safety class, less robotic
+ * repetition.
  */
 export function chooseSaferRoute(routes, hazards = [], {
-    corridor = 4, riskWeight = 8, rng = null, varietyChance = 0, varietyTolerance = 0.15
+    corridor = 4, riskWeight = 8, threats = [], threatCorridor = 8, threatWeight = 6,
+    rng = null, varietyChance = 0, varietyTolerance = 0.15
 } = {}) {
     const candidates = (routes ?? []).filter(r => Array.isArray(r.waypoints) && r.waypoints.length);
     if (!candidates.length) return { chosen: null, index: -1, scores: [], varied: false };
     const scores = candidates.map(r => {
         const len = routeLength(r.waypoints);
         const exposure = hazardExposure(r.waypoints, hazards, { corridor });
+        const hostile = threatExposure(r.waypoints, threats, { corridor: threatCorridor });
         // r.penalty lets callers handicap a route (e.g. block-breaking paths)
-        return Math.round((len + riskWeight * exposure.score + (Number(r.penalty) || 0)) * 10) / 10;
+        return Math.round((len + riskWeight * exposure.score + threatWeight * hostile.score + (Number(r.penalty) || 0)) * 10) / 10;
     });
     let best = 0;
     for (let i = 1; i < scores.length; i++) {

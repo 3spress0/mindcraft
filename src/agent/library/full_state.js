@@ -4,6 +4,8 @@
 
 import { playerPositionSnapshot, groundItems } from '../sensors/radar.js';
 import { dangerSummary } from '../sensors/danger.js';
+import { movementState, chunkStatus, recentSounds, attachSoundAwareness } from '../sensors/awareness.js';
+import { recallSync, uncertaintyFlags } from '../memory/recall.js';
 
 let _world = null;
 let _convoManager = null;
@@ -197,10 +199,47 @@ export function getFullState(agent) {
         // risk level, underground/darkness — so the LLM can reason about
         // safety instead of stumbling into it.
         danger: safeDanger(bot),
+        // Body & world awareness: how the bot is moving, whether the ground
+        // around it is loaded, and what it just heard (server sound events).
+        awareness: safeAwareness(bot),
+        // Relevant memories: places we know that match what the bot is
+        // currently working on (keyword-only, synchronous, bounded).
+        memories: safeRelevantMemories(agent),
         modes: {
             summary: bot.modes.getMiniDocs()
         }
     };
 
     return state;
+}
+
+/** Awareness snapshot, never throwing. */
+function safeAwareness(bot) {
+    try {
+        attachSoundAwareness(bot);
+        const sounds = recentSounds(bot, { windowMs: 12000 })
+            .slice(-5)
+            .map(s => ({ name: s.name, x: s.x, z: s.z }));
+        return { movement: movementState(bot), chunks: chunkStatus(bot), recentSounds: sounds };
+    } catch {
+        return null;
+    }
+}
+
+/** Relevant-memory retrieval keyed to the current task/goal, never throwing. */
+function safeRelevantMemories(agent) {
+    try {
+        const query = agent?.task?.data?.name || agent?.task?.data?.goal || '';
+        if (!query || typeof query !== 'string') return null;
+        const hits = recallSync(agent, query, { limit: 3 });
+        if (!hits.length) return null;
+        const uncertain = uncertaintyFlags(hits);
+        return {
+            for: query.slice(0, 80),
+            hits: hits.map(h => ({ kind: h.kind, name: h.name, x: h.x, y: h.y, z: h.z, distance: h.distance })),
+            uncertain: uncertain.length ? uncertain : null
+        };
+    } catch {
+        return null;
+    }
 }

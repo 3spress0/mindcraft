@@ -5,6 +5,7 @@ import { Prompter } from '../models/prompter.js';
 import { initModes } from './modes.js';
 import { initBot } from '../utils/mcdata.js';
 import { containsCommand, commandExists, executeCommand, truncCommandMessage, isAction, blacklistCommands } from './commands/index.js';
+import { checkConfirmation, consumeConfirmation } from './commands/confirm.js';
 import { executeCommandToolCall } from './commands/tool_adapter.js';
 import { isNativeToolResponse } from '../models/native_tools.js';
 import { ActionManager } from './action_manager.js';
@@ -28,6 +29,9 @@ import { handleSound } from './humanlike/startle.js';
 import { notePortalAt, currentDimension } from './navigation/portals.js';
 import { AutonomyLoop } from './autonomy/task_loop.js';
 import { PlayerLedger } from './social/player_ledger.js';
+import { recordDangerSpot } from './navigation/safe_zones.js';
+import { detectPreviousCrash, markCleanShutdown } from './library/crash_guard.js';
+import { getMetrics } from './library/metrics.js';
 import { MetricsTracker, causeFromDeathMessage } from './library/metrics.js';
 import { MentalMap, noteBedIfNear } from './memory/mental_map.js';
 import { ReactionGate, detectSocialEvents, reactionMessage } from './social/reactions.js';
@@ -175,6 +179,22 @@ export class Agent {
 
         // Autonomous task loop: evaluates needs while idle and acts on the
         // most urgent one (see src/agent/autonomy/). Runs through the normal
+        // Crash detection + restart backoff (GO list: persistent crash
+        // recovery, resume-after-crash). When the previous session died
+        // without a clean shutdown, hold autonomy off for an escalating
+        // window and tell the model it is resuming after a crash.
+        try {
+            this.crash_info = detectPreviousCrash(this.name || 'bot');
+            if (this.crash_info.crashed) {
+                this._autonomy_backoff_until = Date.now() + this.crash_info.backoffMs;
+                console.log(`[crash-guard] previous session crashed (streak ${this.crash_info.streak}); autonomy backoff ${Math.round(this.crash_info.backoffMs / 1000)}s`);
+                this.bot._crash_backoff_s = Math.round(this.crash_info.backoffMs / 1000);
+            }
+        } catch (e) {
+            console.error('Crash-guard init failed:', e.message);
+            this.crash_info = null;
+        }
+
         // action manager so it stays fully interruptible.
         try {
             this.autonomy = new AutonomyLoop(this);
@@ -358,6 +378,14 @@ export class Agent {
                 };
                 convoManager.receiveFromBot(this.last_sender, msg_package);
             }
+        }
+        else if (this.crash_info?.crashed) {
+            // resume-after-crash: let the model know what happened so it can
+            // re-orient deliberately instead of assuming a fresh start
+            await this.handleMessage('system',
+                `You just restarted after an unexpected crash (crash streak ${this.crash_info.streak}). ` +
+                `You respawned and your memory/world knowledge were loaded from disk. ` +
+                `Re-orient: check !status, and resume whatever you were doing if it still makes sense.`, 2);
         }
         else if (init_message && !hasLoadedConversation(save_data)) {
             await this.handleMessage('system', init_message, 2);
@@ -589,6 +617,13 @@ export class Agent {
                     this.routeResponse(source, `Command '${user_command_name}' does not exist.`);
                     return false;
                 }
+                // Confirmation for risky actions (GO list): risky commands
+                // need an explicit "confirm" before they run.
+                const gate = checkConfirmation(this, source, user_command_name, message);
+                if (!gate.proceed) {
+                    this.routeResponse(source, gate.ask);
+                    return true;
+                }
                 this.routeResponse(source, `*${source} used ${user_command_name.substring(1)}*`);
                 if (user_command_name === '!newAction') {
                     // all user-initiated commands are ignored by the bot except for this one
@@ -599,6 +634,16 @@ export class Agent {
                 if (execute_res) 
                     this.routeResponse(source, execute_res);
                 return true;
+            }
+            // A bare "confirm" re-issues the risky command we asked about.
+            if (/^\s*confirm\s*$/i.test(message)) {
+                const pendingCommand = consumeConfirmation(this, source);
+                if (pendingCommand) {
+                    this.routeResponse(source, `*${source} confirmed ${pendingCommand.substring(1)}*`);
+                    let execute_res = await executeCommand(this, pendingCommand);
+                    if (execute_res) this.routeResponse(source, execute_res);
+                    return true;
+                }
             }
         }
 
@@ -982,13 +1027,39 @@ export class Agent {
 
     async update(delta) {
         this.syncBehaviorState();
-        await this.bot.modes.update();
-        this.self_prompter.update(delta);
+        // Global pause (!pause): no self-directed behavior, but the bot
+        // still senses, tracks time, and answers chat.
+        if (!this._paused) {
+            await this.bot.modes.update();
+            this.self_prompter.update(delta);
+            // fire-and-forget: the loop is self-guarding (cooldown + _running flag)
+            this.autonomy?.tick?.().catch(() => {});
+        }
         this.observation_collector?.tick?.();
-        // fire-and-forget: the loop is self-guarding (cooldown + _running flag)
-        this.autonomy?.tick?.().catch(() => {});
         this.tickSocial();
+        this.trackMovement();
         await this.checkTaskDone();
+    }
+
+    /**
+     * Movement metrics (GO list): accumulate blocks walked (throttled) and
+     * flush dirty counters occasionally. Cheap, never throws.
+     */
+    trackMovement() {
+        try {
+            const now = Date.now();
+            if (now - (this._last_move_tick ?? 0) < 1000) return;
+            this._last_move_tick = now;
+            const pos = this.bot?.entity?.position;
+            if (pos && this._last_move_pos) {
+                const d = Math.hypot(pos.x - this._last_move_pos.x, pos.z - this._last_move_pos.z);
+                if (d > 0.5 && d < 32) { // ignore teleports/spawn jumps
+                    getMetrics(this)?.addDistance?.(d);
+                }
+            }
+            this._last_move_pos = pos ? { x: pos.x, z: pos.z } : null;
+            getMetrics(this)?.flushIfDirty?.();
+        } catch { /* metrics are advisory */ }
     }
 
     /**
@@ -1007,12 +1078,36 @@ export class Agent {
             if (!self || !this.player_ledger) return;
 
             const curr = {};
+            let nearestPlayer = null;
+            let nearestPlayerDist = Infinity;
             for (const [username, p] of Object.entries(bot.players ?? {})) {
                 if (!p?.entity?.position || username === this.name) continue;
                 const d = p.entity.position.distanceTo(self);
                 curr[username] = d;
-                this.player_ledger.sight(username, { dist: d });
+                // movement history rides along with every sighting
+                this.player_ledger.sight(username, { dist: d, pos: p.entity.position });
+                if (d < nearestPlayerDist) { nearestPlayerDist = d; nearestPlayer = username; }
             }
+
+            // Reaction to player actions (GO list): if we just took damage
+            // and a player is right on top of us, treat them as the likely
+            // attacker — trust penalty + a bounded, personality-toned remark.
+            try {
+                const health = typeof bot.health === 'number' ? bot.health : null;
+                if (health != null && this._prev_social_health != null
+                    && health < this._prev_social_health - 0.5
+                    && nearestPlayer && nearestPlayerDist <= 5
+                    && now - (this._last_harm_reaction ?? 0) > 20000) {
+                    this._last_harm_reaction = now;
+                    this.player_ledger.setTrust(nearestPlayer, 'hostile', { note: 'attacked me' });
+                    try { recordDangerSpot(this, { pos: self, reason: `hurt near ${nearestPlayer}` }); } catch { /* optional */ }
+                    if (this.canSpeakSocial?.()) {
+                        const tone = this.personality?.traits?.caution > 0.6 ? 'Hey! Back off, please.' : 'Ow — why?';
+                        try { bot.whisper(nearestPlayer, tone); } catch { /* optional */ }
+                    }
+                }
+                if (health != null) this._prev_social_health = health;
+            } catch { /* harm reactions are advisory */ }
 
             const events = detectSocialEvents(this._social_prev ?? {}, curr);
             this._social_prev = curr;
@@ -1086,6 +1181,7 @@ export class Agent {
         this.history.traceEvent('lifecycle_event', { message: msg, exit_code: code });
         this.bot.chat(code > 1 ? 'Restarting.': 'Exiting.');
         this.history.save();
+        try { markCleanShutdown(this.name || 'bot'); } catch { /* best effort */ }
         process.exit(code);
     }
     async checkTaskDone() {

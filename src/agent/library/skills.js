@@ -10,6 +10,11 @@ import { RouteCache, routeCacheSettings, snap, downsample, verifyRoute } from ".
 import { chooseSaferRoute } from "../navigation/route_choice.js";
 import { createRng } from "../humanlike/rng.js";
 import * as durability from "./durability.js";
+import { waitChunksReady } from "./chunks.js";
+import { routeReconsiderationDue } from "../humanlike/reactions.js";
+import { scoreThreats } from "../autonomy/combat.js";
+import { logEvent } from "./structlog.js";
+import { getMetrics } from "./metrics.js";
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -186,6 +191,18 @@ export async function craftRecipe(bot, itemName, num=1) {
     }
 
     const afterCount = world.getInventoryCounts(bot)[itemName] || 0;
+    // Crafting verification (GO list): the craft only counts when the
+    // inventory actually grew by at least what was requested.
+    const verified = afterCount - beforeCount >= num;
+    try {
+        logEvent(bot, 'inventory', verified ? 'craft_verified' : 'craft_short', {
+            item: itemName, expected: num, actual: afterCount - beforeCount
+        });
+        if (!verified) {
+            const agent = bot?._autonomy?.agent ?? null;
+            if (agent) getMetrics(agent)?.recordWaste?.('craft_short', { item: itemName });
+        }
+    } catch { /* verification logging is advisory */ }
     if (afterCount - beforeCount < num) {
         log(bot, `Not enough ${craftLimit.limitingResource || 'resources'} to craft ${num} ${itemName}, crafted ${Math.max(0, afterCount - beforeCount)}. You now have ${afterCount} ${itemName}.`);
     }
@@ -998,15 +1015,18 @@ export async function putInChestAt(bot, chest, itemName, num=-1) {
         return false;
     }
     let to_put = num === -1 ? item.count : Math.min(num, item.count);
+    const beforeCount = world.getInventoryCounts(bot)[itemName] ?? 0;
     await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
     await humanlike.pause(bot, bot._personality, "window"); // humanlike: natural container-open pause
     const chestContainer = await bot.openContainer(chest);
     await chestContainer.deposit(item.type, null, to_put);
     await chestContainer.close();
+    verifyInventoryDelta(bot, itemName, -to_put, beforeCount);
     try {
         bot._storage_index?.adjust(chest.position, itemName, to_put, { type: chest.name });
         bot._storage_index?.persist();
     } catch (e) { void e; }
+    try { logEvent(bot, 'inventory', 'deposit', { item: itemName, count: to_put }); } catch { void 0; }
     log(bot, `Successfully put ${to_put} ${itemName} in the chest.`);
     return true;
 }
@@ -1044,6 +1064,7 @@ export async function takeFromChestAt(bot, chest, itemName, num=-1) {
         log(bot, `No chest block to take from.`);
         return false;
     }
+    const beforeCount = world.getInventoryCounts(bot)[itemName] ?? 0;
     await goToPosition(bot, chest.position.x, chest.position.y, chest.position.z, 2);
     await humanlike.pause(bot, bot._personality, "window"); // humanlike: natural container-open pause
     const chestContainer = await bot.openContainer(chest);
@@ -1078,8 +1099,78 @@ export async function takeFromChestAt(bot, chest, itemName, num=-1) {
             bot._storage_index?.persist();
         }
     } catch (e) { void e; }
+    try { logEvent(bot, 'inventory', 'withdraw', { item: itemName, count: totalTaken }); } catch { void 0; }
+    if (totalTaken > 0) verifyInventoryDelta(bot, itemName, totalTaken, beforeCount);
     log(bot, `Successfully took ${totalTaken} ${itemName} from the chest.`);
     return totalTaken > 0;
+}
+
+/**
+ * Terrain preparation (GO list): clear a box of blocks — e.g. flattening a
+ * build site before placing a schematic. Breaks every non-air block inside
+ * the box except the floor plane (y = min y), bounded by `cap`. Never
+ * touches unloaded chunks.
+ * @param {object} bot
+ * @param {{x,y,z}} a - one corner
+ * @param {{x,y,z}} b - opposite corner
+ * @param {object} [opts] { cap }
+ * @returns {Promise<{cleared, skipped, reason}>}
+ */
+export async function clearArea(bot, a, b, { cap = 256 } = {}) {
+    const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x);
+    const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
+    const minZ = Math.min(a.z, b.z), maxZ = Math.max(a.z, b.z);
+    let cleared = 0;
+    let skipped = 0;
+    let reason = 'completed';
+    outer:
+    for (let y = minY + 1; y <= maxY; y++) { // keep the floor plane
+        for (let x = minX; x <= maxX; x++) {
+            for (let z = minZ; z <= maxZ; z++) {
+                if (bot.interrupt_code) { reason = 'interrupted'; break outer; }
+                if (cleared >= cap) { reason = 'cap reached'; break outer; }
+                let block = null;
+                try { block = bot.blockAt({ x, y, z }, false); } catch { block = null; }
+                if (!block || block.name === 'air' || block.name === 'cave_air') continue;
+                try {
+                    await breakBlockAt(bot, x, y, z);
+                    cleared++;
+                } catch {
+                    skipped++;
+                    if (skipped > 16) { reason = 'too many blocks refused'; break outer; }
+                }
+            }
+        }
+    }
+    return { cleared, skipped, reason };
+}
+
+/** Record a path outcome in the persistent metrics tracker (best-effort). */
+function recordPathMetric(bot, status, cached = false) {
+    try {
+        const agent = bot?._autonomy?.agent ?? null;
+        if (!agent) return;
+        getMetrics(agent)?.recordPath?.({ status, cached });
+    } catch { /* metrics are advisory */ }
+}
+
+/**
+ * Inventory desync detection (GO list): compare the inventory delta we just
+ * caused against what actually happened. Returns null when consistent, or a
+ * short explanation of the mismatch (and logs it). Counting is server-side
+ * (bot.inventory), so this is a legit consistency check, not a packet probe.
+ */
+export function verifyInventoryDelta(bot, itemName, expectedDelta, beforeCount) {
+    try {
+        const after = world.getInventoryCounts(bot)[itemName] ?? 0;
+        const actualDelta = after - beforeCount;
+        if (actualDelta === expectedDelta) return null;
+        const msg = `desync on ${itemName}: expected ${expectedDelta >= 0 ? '+' : ''}${expectedDelta}, actual ${actualDelta >= 0 ? '+' : ''}${actualDelta}`;
+        try { logEvent(bot, 'inventory', 'desync', { item: itemName, expectedDelta, actualDelta }); } catch { void 0; }
+        return msg;
+    } catch {
+        return null;
+    }
 }
 
 export async function takeFromChest(bot, itemName, num=-1) {
@@ -1245,9 +1336,17 @@ export async function goToGoal(bot, goal) {
     const routeStart = snap(bot.entity?.position);
     const routeEnd = goalPosForCache(goal);
 
+    // Chunk-load guard: pathfinding into unloaded chunks fails for no good
+    // reason; wait briefly for the destination chunk before probing.
+    try {
+        if (routeEnd) await waitChunksReady(bot, routeEnd, { timeoutMs: 1500 });
+    } catch { /* best-effort; pathfinding proceeds either way */ }
+
     // Route cache: replay a verified recent path before paying for probes.
     try {
         if (routeStart && routeEnd && await tryReplayCachedRoute(bot, goal, profile, routeStart, routeEnd)) {
+            try { logEvent(bot, 'navigation', 'route_ok', { profile, cached: true }); } catch { void 0; }
+            recordPathMetric(bot, 'ok', true);
             return true;
         }
     } catch (e) {
@@ -1302,18 +1401,25 @@ export async function goToGoal(bot, goal) {
     }
 
     const doorCheckInterval = startDoorInterval(bot);
+    const reconsiderInterval = startReconsiderationInterval(bot, routeStart);
 
     bot.pathfinder.setMovements(final_movements);
     try {
         await bot.pathfinder.goto(goal);
         clearInterval(doorCheckInterval);
+        if (reconsiderInterval) clearInterval(reconsiderInterval);
         rememberRoute(bot, profile, routeStart, routeEnd, foundPath);
         try { getRouteCache(bot)?.clearFailure(routeStart, routeEnd, profile); } catch { void 0; }
+        try { logEvent(bot, 'navigation', 'route_ok', { profile, cached: false }); } catch { void 0; }
+        recordPathMetric(bot, 'ok', false);
         return true;
     } catch (err) {
         clearInterval(doorCheckInterval);
+        if (reconsiderInterval) clearInterval(reconsiderInterval);
         // remember the failure so we don't keep retrying the same dead route
         try { getRouteCache(bot)?.recordFailure(routeStart, routeEnd, profile); } catch { void 0; }
+        try { logEvent(bot, 'navigation', 'route_fail', { profile, error: String(err?.message ?? err).slice(0, 120) }); } catch { void 0; }
+        recordPathMetric(bot, 'fail', false);
         // we need to catch so we can clean up the door check interval, then rethrow the error
         throw err;
     }
@@ -1350,6 +1456,9 @@ function pickBetweenRoutes(bot, firstPath, secondPath) {
     try {
         let hazards = [];
         try { hazards = scanHazards(bot, { radius: 32 }) ?? []; } catch { hazards = []; }
+        // hostile-mob avoidance: routes that pass near threats are penalized
+        let threats = [];
+        try { threats = scoreThreats(bot, { radius: 32 }).threats ?? []; } catch { threats = []; }
         const variety = settings.navigation?.route_variety;
         bot._route_pick_seq = (bot._route_pick_seq ?? 0) + 1;
         const rng = createRng(`${bot.username ?? 'bot'}:route:${bot._route_pick_seq}`);
@@ -1358,11 +1467,47 @@ function pickBetweenRoutes(bot, firstPath, secondPath) {
             // when meaningfully safer/shorter (or variety rolls that way)
             [{ waypoints: firstPath }, { waypoints: secondPath, penalty: 6 }],
             hazards,
-            { rng, varietyChance: Math.max(0, Math.min(0.5, variety ?? 0.1)) }
+            { threats, rng, varietyChance: Math.max(0, Math.min(0.5, variety ?? 0.1)) }
         );
         return index !== 1;
     } catch {
         return true; // the historic default: non-destructive wins
+    }
+}
+
+/**
+ * Occasional route reconsideration: while walking a long route, briefly
+ * re-check the surroundings now and then; when a hard hazard has appeared
+ * right next to the path, swap in fresh movements so the pathfinder
+ * re-evaluates instead of blindly following the stale line. Seeded +
+ * bounded (few checks, probabilistic), humanlike rather than robotic.
+ */
+function startReconsiderationInterval(bot, routeStart) {
+    try {
+        bot._reconsider_seq = (bot._reconsider_seq ?? 0) + 1;
+        const rng = createRng(`${bot.username ?? 'bot'}:reconsider:${bot._reconsider_seq}`);
+        let checks = 0;
+        const iv = setInterval(() => {
+            try {
+                if (checks++ >= 6) { clearInterval(iv); return; } // bounded lifetime
+                const pos = bot.entity?.position;
+                if (!pos || !routeStart) return;
+                const traveled = Math.hypot(pos.x - routeStart.x, pos.z - routeStart.z);
+                if (!routeReconsiderationDue(rng, { distTraveled: traveled, minDist: 24, chance: 0.2 })) return;
+                const hazards = scanHazards(bot, { radius: 10 });
+                const nearHard = hazards.find(h => h.tier === 'hard' && h.dist <= 4);
+                if (!nearHard) return;
+                const profile = getProfileName(bot);
+                const fresh = new pf.Movements(bot);
+                if (profile !== 'default') applyProfile(fresh, profile);
+                if (profileAvoidsHazards(profile)) hardenMovements(fresh, bot);
+                bot.pathfinder.setMovements(fresh);
+                log(bot, `Reconsidering route: ${nearHard.name} is close to our path.`);
+            } catch { /* reconsideration is advisory */ }
+        }, 10000);
+        return iv;
+    } catch {
+        return null;
     }
 }
 

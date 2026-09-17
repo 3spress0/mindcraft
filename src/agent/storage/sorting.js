@@ -81,7 +81,7 @@ export function isSorted(slots) {
  * Sort a chest in-world using window-click swaps.
  * @returns {Promise<string>} human-readable result
  */
-export async function executeSort(bot, chestBlock) {
+export async function executeSort(bot, chestBlock, { force = false } = {}) {
     if (!bot || !chestBlock?.position) return 'sort: no chest to sort';
     const skills = await import('../library/skills.js');
 
@@ -95,6 +95,15 @@ export async function executeSort(bot, chestBlock) {
 
     try {
         const slots = container.slots ?? [];
+        // Avoid unnecessary inventory rearrangement (GO list): only shuffle
+        // when the chest is genuinely scattered, unless forced.
+        if (!force) {
+            try {
+                const { sortWarranted } = await import('../humanlike/reactions.js');
+                const check = sortWarranted(slots);
+                if (!check.warranted) return `sort: chest is tidy enough already (${check.runs} runs) — use force to sort anyway`;
+            } catch { /* guard is advisory */ }
+        }
         const { moves } = computeSortPlan(slots);
         if (!moves.length) return 'sort: chest is already sorted';
         for (const mv of moves) {

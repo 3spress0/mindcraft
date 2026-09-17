@@ -22,17 +22,41 @@ import { isEdible } from './unload.js';
 import { farmSnapshot } from './farming.js';
 import { planBreeding } from './husbandry.js';
 import { assessLocalRisk, filterNeedsByRisk, riskLine } from './risk.js';
+import { updateCombatState, executeEscape, combatStateLine } from './combat.js';
+import { seekSafeZone } from '../navigation/safe_zones.js';
 import { scanDarkSpots } from './base.js';
 import { executePatrolNeed } from './patrol.js';
 import { getHome, nearestBase } from '../navigation/home.js';
+import { touchHeartbeat } from '../library/crash_guard.js';
+import { worldSettings } from '../library/world_config.js';
+import { logEvent } from '../library/structlog.js';
 import * as world from '../library/world.js';
 import convoManager from '../conversation.js';
 
 /** Errands after which the bot walks back home (when one is set). */
 export const RETURN_HOME_KINDS = new Set(['explore', 'farm', 'inventory_full', 'patrol', 'husbandry']);
 
-export function getAutonomyConfig() {
-    const block = settings.autonomy ?? {};
+/**
+ * Batch related tasks (GO list: batch related tasks): needs that pair well
+ * in a single outing. When the first one finishes, a pending partner runs
+ * right away instead of going home and coming back out.
+ */
+export const BATCH_PAIRS = {
+    farm: ['inventory_full', 'husbandry'],
+    inventory_full: ['farm'],
+    husbandry: ['farm'],
+    maintain_base: ['inventory_full']
+};
+
+/** Needs that stay acceptable while combat is engaged (upkeep only). */
+export const COMBAT_SAFE_NEEDS = new Set(['tool_replace', 'restock_torches', 'restock_food']);
+
+export function getAutonomyConfig(agent = null) {
+    // Per-world configuration: settings.worlds overrides merge in here.
+    let block = settings.autonomy ?? {};
+    try {
+        if (agent) block = worldSettings(agent)?.autonomy ?? block;
+    } catch { /* world overrides are optional */ }
     const needs = {
         tool_replace_threshold: block.needs?.tool_replace_threshold ?? 0.15,
         explore_when_idle: block.needs?.explore_when_idle ?? true,
@@ -60,8 +84,33 @@ export function getAutonomyConfig() {
         cooldown_s: [Math.max(5, lo), Math.max(5, hi)],
         action_timeout_s: Math.max(30, block.action_timeout_s ?? 180),
         history_limit: Math.max(4, block.history_limit ?? 16),
+        // Scheduled tasks (GO list): [{ at: 'dawn'|'dusk'|'HH:MM', do: '<need kind>' }]
+        scheduled: Array.isArray(block.scheduled) ? block.scheduled : [],
         needs
     };
+}
+
+/**
+ * Does a scheduled entry match the current in-game moment?
+ * 'dawn' ≈ time 23000-1500, 'dusk' ≈ 12000-14000, 'HH:MM' maps 24h -> 24000
+ * with a ±30-minute window. Pure given (entry, timeOfDay) — testable.
+ */
+export function scheduledMatches(entry, timeOfDay) {
+    if (!entry?.at || typeof timeOfDay !== 'number') return false;
+    const at = String(entry.at).toLowerCase();
+    const near = (a, b, win = 1000) => {
+        const d = Math.abs(a - b);
+        return Math.min(d, 24000 - d) <= win;
+    };
+    if (at === 'dawn') return near(timeOfDay, 0);
+    if (at === 'dusk') return near(timeOfDay, 13000);
+    const m = at.match(/^(\d{1,2}):(\d{2})$/);
+    if (m) {
+        const minutes = Number(m[1]) * 60 + Number(m[2]);
+        const mcTime = Math.round((minutes / (24 * 60)) * 24000);
+        return near(timeOfDay, mcTime, 500);
+    }
+    return false;
 }
 
 /** Build the state snapshot needs.js consumes. Pure given the agent. */
@@ -167,6 +216,7 @@ export class AutonomyLoop {
     _blocked() {
         const a = this.agent;
         if (!a?.bot) return true;
+        if (a._paused) return true; // global !pause is a hard gate
         if (typeof a.isIdle === 'function' && !a.isIdle()) return true;
         if (typeof a.isHandlingMessage === 'function' && a.isHandlingMessage()) return true;
         if (a.self_prompter?.isActive?.()) return true;
@@ -186,11 +236,95 @@ export class AutonomyLoop {
             const now = this._now();
             if (now < this._nextRunAt) return;
             if (this._blocked()) return;
+            // crash-recovery backoff: after a detected crash-loop, hold the
+            // loop off for an escalating window (GO list: persistent crash
+            // recovery)
+            if (this.agent?._autonomy_backoff_until && now < this.agent._autonomy_backoff_until) return;
+            // heartbeat for crash detection — throttled, never throws
+            try {
+                if (now - (this._lastHeartbeat ?? 0) > 15000) {
+                    this._lastHeartbeat = now;
+                    const botName = this.agent?.bot?.username ?? this.agent?.name;
+                    if (botName) touchHeartbeat(botName);
+                }
+            } catch { /* heartbeat is advisory */ }
 
-            const cfg = getAutonomyConfig();
+            const cfg = getAutonomyConfig(this.agent);
+
+            // Combat guard (GO list: reactive flee / safe-zone seeking /
+            // threat-driven posture): when things go bad the loop stops
+            // planning chores and gets the bot to safety first.
+            let combatState = null;
+            try { combatState = updateCombatState(this.agent.bot); } catch { combatState = null; }
+            this.lastCombat = combatState;
+            // Food selection based on context (GO list): in a fight the bot
+            // grabs quick calories; at peace it eats for saturation.
+            try {
+                const ae = this.agent?.bot?.autoEat;
+                if (ae?.options) {
+                    const want = combatState?.phase === 'engaged' ? 'foodPoints' : 'saturation';
+                    if (ae.options.priority !== want) ae.options.priority = want;
+                }
+            } catch { /* auto-eat tuning is advisory */ }
+            if (combatState?.phase === 'fleeing' && now - (this._lastEscapeAt ?? 0) > 30000) {
+                this._lastEscapeAt = now;
+                this._running = true;
+                let result = 'escape: unknown';
+                try {
+                    const runner = async () => {
+                        const esc = await executeEscape(this.agent);
+                        const zone = await seekSafeZone(this.agent, { radius: 10 });
+                        return `${esc} | ${zone}`;
+                    };
+                    if (this.agent.actions?.runAction) {
+                        const code = await this.agent.actions.runAction('autonomy:escape', runner, { timeout: cfg.action_timeout_s });
+                        result = code?.interrupted ? 'escape [interrupted]' : 'escape executed';
+                    } else {
+                        result = await runner();
+                    }
+                } catch (e) {
+                    result = `escape error: ${e.message}`;
+                }
+                const entry = { t: now, kind: 'escape', detail: combatState.reason ?? combatState.level, result };
+                this.history.push(entry);
+                if (this.history.length > cfg.history_limit) this.history.splice(0, this.history.length - cfg.history_limit);
+                this.lastRun = entry;
+                this._nextRunAt = now + this._cooldownMs(cfg);
+                return;
+            }
+
+            // Occasionally reconsider goals (GO list): after long idle
+            // stretches, drop an advisory nudge into the conversation so the
+            // model re-evaluates priorities on its next turn. Gated, seeded,
+            // never forces an LLM call.
+            try {
+                const idleMs = typeof this.agent.idleForMs === 'function' ? this.agent.idleForMs() : 0;
+                if (idleMs > 15 * 60_000 && now - (this._lastReconsiderAt ?? 0) > 30 * 60_000) {
+                    const rng = this._rng ?? this.agent?.personality?.rng ?? null;
+                    if (!rng?.chance || rng.chance(0.35)) {
+                        this._lastReconsiderAt = now;
+                        this.agent.history?.add?.('system',
+                            'You have been idle for a while. Reconsider your current goals and priorities — is there something more useful to do?');
+                        logEvent(this.agent, 'autonomy', 'reconsider_goals', { idleMs: Math.round(idleMs / 1000) });
+                    }
+                }
+            } catch { /* advisory */ }
+
+            // Scheduled tasks: dawn/dusk/clock-time chores, once per mc-day.
+            try {
+                const due = this._dueScheduled(cfg);
+                if (due) {
+                    const entry = await this._runNeed(due.need, cfg, now, `scheduled@${due.entry.at}`);
+                    if (entry) {
+                        this._nextRunAt = now + this._cooldownMs(cfg);
+                        return;
+                    }
+                }
+            } catch { /* scheduling must never break the loop */ }
+
             if (this._exploreOverride != null) cfg.needs.explore_when_idle = this._exploreOverride;
             const ctx = snapshotNeeds(this.agent, cfg);
-            const needs = evaluateNeeds(ctx, cfg.needs);
+            let needs = evaluateNeeds(ctx, cfg.needs);
 
             // Risk-aware planning: dangerous local conditions hold risky work
             // (exploration, farming) while safe upkeep still proceeds.
@@ -198,12 +332,17 @@ export class AutonomyLoop {
             try { risk = assessLocalRisk(this.agent.bot, { posture: this.agent.bot?._risk_profile }); }
             catch { risk = null; }
             this.lastRisk = risk;
-            const safeNeeds = filterNeedsByRisk(needs, risk);
+            let safeNeeds = filterNeedsByRisk(needs, risk);
+            // Threat-driven posture: while actively engaged, only upkeep runs.
+            if (combatState?.phase === 'engaged') {
+                safeNeeds = safeNeeds.filter(n => COMBAT_SAFE_NEEDS.has(n.kind));
+            }
             const actionable = safeNeeds.find(n => !n.advisory && this._executors[n.kind]);
             if (!actionable) {
                 const held = needs.find(n => !n.advisory && this._executors[n.kind]);
-                if (held && risk?.level === 'high') {
-                    const entry = { t: now, kind: held.kind, detail: held.detail, result: `held: ${riskLine(risk)}` };
+                if (held && (risk?.level === 'high' || combatState?.phase === 'engaged')) {
+                    const why = combatState?.phase === 'engaged' ? combatStateLine(combatState) : riskLine(risk);
+                    const entry = { t: now, kind: held.kind, detail: held.detail, result: `held: ${why}` };
                     this.history.push(entry);
                     if (this.history.length > cfg.history_limit) this.history.splice(0, this.history.length - cfg.history_limit);
                     this.lastRun = entry;
@@ -218,6 +357,19 @@ export class AutonomyLoop {
             try {
                 const runner = async () => {
                     result = await this._executors[actionable.kind](this.agent, actionable, cfg.needs) ?? 'done';
+                    // Batch related tasks: a pending partner need runs in the
+                    // same outing before we walk home.
+                    const partners = BATCH_PAIRS[actionable.kind] ?? [];
+                    for (const kind of partners) {
+                        if (this.agent?.bot?.interrupt_code) break;
+                        const partner = safeNeeds.find(n => n.kind === kind && !n.advisory && this._executors[kind]);
+                        if (!partner) continue;
+                        try {
+                            const partnerResult = await this._executors[kind](this.agent, partner, cfg.needs);
+                            result += ` [batched ${kind}: ${partnerResult ?? 'done'}]`;
+                        } catch { /* batching is best-effort */ }
+                        break; // one partner per outing keeps runs bounded
+                    }
                     // Humanlike touch: come home after wandering errands.
                     if (RETURN_HOME_KINDS.has(actionable.kind) && cfg.needs.return_home_after_errand !== false) {
                         try {
@@ -257,9 +409,61 @@ export class AutonomyLoop {
         }
     }
 
+    /** Find the first scheduled entry due now (deduped once per mc-day). */
+    _dueScheduled(cfg) {
+        if (!cfg.scheduled?.length) return null;
+        const bot = this.agent?.bot;
+        const t = bot?.time;
+        let timeOfDay = null;
+        let day = 0;
+        if (typeof t === 'number') {
+            timeOfDay = t % 24000;
+            day = Math.floor(t / 24000);
+        } else if (typeof t?.timeOfDay === 'number') {
+            timeOfDay = t.timeOfDay % 24000;
+            day = Math.floor((t.age ?? t.timeOfDay) / 24000);
+        }
+        if (timeOfDay == null) return null;
+        for (const entry of cfg.scheduled) {
+            if (!entry?.do || !scheduledMatches(entry, timeOfDay)) continue;
+            const key = `${day}:${entry.at}:${entry.do}`;
+            this._scheduledDone ??= new Set();
+            if (this._scheduledDone.has(key)) continue;
+            if (this._scheduledDone.size > 64) this._scheduledDone.clear();
+            this._scheduledDone.add(key);
+            const need = { kind: String(entry.do), detail: 'scheduled', advisory: false };
+            if (!this._executors[need.kind]) continue;
+            return { entry, need };
+        }
+        return null;
+    }
+
+    /** Run a need through the normal action-manager flow (scheduled tasks). */
+    async _runNeed(need, cfg, now, detailPrefix = '') {
+        let result = 'no result';
+        try {
+            const runner = async () => {
+                result = await this._executors[need.kind](this.agent, need, cfg.needs) ?? 'done';
+            };
+            if (this.agent.actions?.runAction) {
+                const code = await this.agent.actions.runAction(`autonomy:${need.kind}`, runner, { timeout: cfg.action_timeout_s });
+                if (code?.interrupted) result = `${result} [interrupted]`;
+            } else {
+                await runner();
+            }
+        } catch (e) {
+            result = `executor error: ${e.message}`;
+        }
+        const entry = { t: now, kind: need.kind, detail: detailPrefix || need.detail, result };
+        this.history.push(entry);
+        if (this.history.length > cfg.history_limit) this.history.splice(0, this.history.length - cfg.history_limit);
+        this.lastRun = entry;
+        return entry;
+    }
+
     /** Status lines for !autonomyStatus. */
     summarize() {
-        const cfg = getAutonomyConfig();
+        const cfg = getAutonomyConfig(this.agent);
         let ctx = {};
         try { ctx = snapshotNeeds(this.agent, cfg); } catch { ctx = {}; }
         let needs = [];
@@ -277,6 +481,9 @@ export class AutonomyLoop {
         let riskLineText = '';
         try { riskLineText = riskLine(this.lastRisk ?? assessLocalRisk(this.agent?.bot)); } catch { riskLineText = ''; }
         if (riskLineText) lines.push(riskLineText);
+        try {
+            if (this.lastCombat) lines.push(combatStateLine(this.lastCombat));
+        } catch { /* optional */ }
         if (this.history.length) {
             lines.push('Recent history:');
             for (const h of this.history.slice(-5)) lines.push(`- ${h.kind}: ${h.result}`);

@@ -30,6 +30,13 @@ export class MetricsTracker {
         this.lastRespawn = null;
         /** sessions observed (increments on construction with a persisted file) */
         this.sessions = 1;
+        /** replan / movement / waste metrics */
+        this.replans = 0;
+        this.lastReplan = null;
+        this.paths = { ok: 0, fail: 0, cachedReplays: 0 };
+        this.distanceWalked = 0;
+        this.waste = {};
+        this._dirty = false;
         this.load();
     }
 
@@ -86,6 +93,37 @@ export class MetricsTracker {
         return this.lastRespawn;
     }
 
+    /** Replan metrics (GO list): count replans/recoveries across sessions. */
+    recordReplan({ reason = 'unknown' } = {}) {
+        this.replans = (this.replans ?? 0) + 1;
+        this.lastReplan = { t: this._now(), reason: String(reason).slice(0, 64) };
+        this.persist();
+    }
+
+    /** Movement metrics (GO list): path outcomes + distance walked. */
+    recordPath({ status = 'ok', cached = false } = {}) {
+        this.paths ??= { ok: 0, fail: 0, cachedReplays: 0 };
+        if (status === 'ok') this.paths.ok++;
+        else this.paths.fail++;
+        if (cached) this.paths.cachedReplays++;
+        // persisted with the next persist() call (cheap enough to batch)
+        this._dirty = true;
+    }
+
+    addDistance(blocks) {
+        if (!(blocks > 0)) return;
+        this.distanceWalked = Math.round(((this.distanceWalked ?? 0) + blocks) * 10) / 10;
+        this._dirty = true;
+    }
+
+    /** Resource-waste metrics (GO list): broken tools, dropped items, failed crafts. */
+    recordWaste(kind, { item = null } = {}) {
+        this.waste ??= {};
+        const key = item ? `${kind}:${item}` : kind;
+        this.waste[key] = (this.waste[key] ?? 0) + 1;
+        this.persist();
+    }
+
     uptimeMs() {
         return Math.max(0, this._now() - this.sessionStart);
     }
@@ -118,7 +156,24 @@ export class MetricsTracker {
         }
         const mins = Math.round(this.uptimeMs() / 60000);
         lines.push(`Session uptime: ${mins} min, death rate: ${this.deathRatePerHour()}/h`);
+        const p = this.paths ?? { ok: 0, fail: 0, cachedReplays: 0 };
+        lines.push(`Replans: ${this.replans ?? 0}; paths ok/fail: ${p.ok}/${p.fail} (${p.cachedReplays ?? 0} cached replays)`);
+        lines.push(`Distance walked: ${Math.round(this.distanceWalked ?? 0)} blocks`);
+        const waste = Object.entries(this.waste ?? {});
+        lines.push(waste.length
+            ? `Waste: ${waste.slice(0, 4).map(([k, n]) => `${k} x${n}`).join(', ')}`
+            : 'Waste: none recorded');
         return lines.join('\n');
+    }
+
+    /** Throttled flush of dirty high-frequency counters (movement/paths). */
+    flushIfDirty({ minIntervalMs = 60_000 } = {}) {
+        if (!this._dirty) return false;
+        const now = this._now();
+        if (now - (this._lastFlush ?? 0) < minIntervalMs) return false;
+        this._lastFlush = now;
+        this._dirty = false;
+        return this.persist();
     }
 
     persist() {
@@ -132,7 +187,12 @@ export class MetricsTracker {
                 causes: this.causes,
                 lastDeath: this.lastDeath,
                 lastRespawn: this.lastRespawn,
-                sessions: this.sessions
+                sessions: this.sessions,
+                replans: this.replans ?? 0,
+                lastReplan: this.lastReplan ?? null,
+                paths: this.paths ?? { ok: 0, fail: 0, cachedReplays: 0 },
+                distanceWalked: this.distanceWalked ?? 0,
+                waste: this.waste ?? {}
             }, null, 2));
             fs.renameSync(tmp, fp);
             return true;
@@ -148,6 +208,13 @@ export class MetricsTracker {
             this.lastDeath = data?.lastDeath ?? null;
             this.lastRespawn = data?.lastRespawn ?? null;
             this.sessions = (Number(data?.sessions) || 0) + 1;
+            this.replans = Number(data?.replans) || 0;
+            this.lastReplan = data?.lastReplan ?? null;
+            this.paths = data?.paths && typeof data.paths === 'object'
+                ? { ok: Number(data.paths.ok) || 0, fail: Number(data.paths.fail) || 0, cachedReplays: Number(data.paths.cachedReplays) || 0 }
+                : { ok: 0, fail: 0, cachedReplays: 0 };
+            this.distanceWalked = Number(data?.distanceWalked) || 0;
+            this.waste = data?.waste && typeof data.waste === 'object' ? data.waste : {};
             return true;
         } catch { return false; }
     }

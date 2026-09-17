@@ -10,6 +10,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { selectAPI, selectEmbeddingAPI, createModel } from './_model_map.js';
+import { wrapModelWithFallbacks } from './model_fallback.js';
 import { createHash } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -81,6 +82,22 @@ export class Prompter {
         let chat_model_profile = selectAPI(this.profile.model);
         this.chat_model = createModel(cloneModelProfile(chat_model_profile));
         this.applyModelSessionIdentity(this.chat_model, chat_model_profile, 'conversation');
+
+        // Cross-provider fallback chain (GO list: LLM failure fallback):
+        // transient provider errors (network/rate-limit/5xx) fail over to the
+        // next configured model instead of dropping the turn. Profile key:
+        // "fallback_models": ["{provider}/{api}/{model}", ...]
+        if (Array.isArray(this.profile.fallback_models) && this.profile.fallback_models.length) {
+            const specs = [...this.profile.fallback_models];
+            this.chat_model = wrapModelWithFallbacks(
+                this.chat_model,
+                () => specs.map(spec => {
+                    try { return createModel(selectAPI(spec)); }
+                    catch (e) { console.error(`[model-fallback] bad fallback spec "${spec}": ${e.message}`); return null; }
+                }).filter(Boolean),
+                { onFallback: () => console.warn('[model-fallback] conversation model failed over to a fallback') }
+            );
+        }
 
         const code_model_profile = hasModelSelection(this.profile.code_model)
             ? selectAPI(this.profile.code_model)

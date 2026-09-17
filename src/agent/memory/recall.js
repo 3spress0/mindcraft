@@ -149,6 +149,51 @@ export async function recall(agent, query, { limit = 8, maxDistance = null } = {
     return hits.slice(0, Math.max(1, limit));
 }
 
+/**
+ * Synchronous keyword-only recall (no embedding provider) — safe to call
+ * from synchronous context builders like full_state.
+ */
+export function recallSync(agent, query, { limit = 4, maxDistance = null } = {}) {
+    try {
+        const tokens = tokenize(query);
+        if (!tokens.length) return [];
+        const corpus = buildCorpus(agent);
+        const hits = [];
+        for (const doc of corpus) {
+            const score = scoreDoc(doc, tokens);
+            if (score <= 0) continue;
+            if (maxDistance != null && doc.distance != null && doc.distance > maxDistance) continue;
+            hits.push({ ...doc, score: Math.round(score * 100) / 100 });
+        }
+        hits.sort((a, b) =>
+            b.score - a.score ||
+            (a.distance ?? Infinity) - (b.distance ?? Infinity) ||
+            a.name.localeCompare(b.name));
+        return hits.slice(0, Math.max(1, limit));
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Explicit uncertainty (GO list: uncertainty handling / explicit
+ * uncertainty when information is incomplete): flag recalled items that we
+ * cannot currently verify — no known position, or far away and possibly
+ * stale — so the model hedges instead of asserting.
+ * @returns {Array<{name, reason}>}
+ */
+export function uncertaintyFlags(hits, { farThreshold = 128 } = {}) {
+    const flags = [];
+    for (const h of hits ?? []) {
+        if (h.x == null || h.z == null) {
+            flags.push({ name: h.name, reason: 'no known position' });
+        } else if (h.distance != null && h.distance > farThreshold) {
+            flags.push({ name: h.name, reason: `far away (${Math.round(h.distance)}m) — may have changed` });
+        }
+    }
+    return flags;
+}
+
 /** Human-readable recall result. */
 export function recallSummary(query, hits) {
     if (!hits.length) return `I don't remember anything matching "${query}".`;
@@ -157,6 +202,10 @@ export function recallSummary(query, hits) {
         const where = h.x != null ? ` at (${h.x}, ${h.y}, ${h.z})` : '';
         const dist = h.distance != null ? `, ${h.distance}m away` : '';
         lines.push(`- [${h.kind}] ${h.name}${where}${dist}`);
+    }
+    const flags = uncertaintyFlags(hits);
+    if (flags.length) {
+        lines.push(`Note — uncertain: ${flags.map(f => `${f.name} (${f.reason})`).join('; ')}.`);
     }
     return lines.join('\n');
 }

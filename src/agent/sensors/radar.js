@@ -79,6 +79,25 @@ function heldItemName(entity) {
  * Detailed intel on every visible player (Meteor PlayerList/Tracers style).
  * @returns Array<{username, position, distance, bearing, health, flags, heldItem, ping}>
  */
+/**
+ * Visibility scoring hook (GO list: visibility scoring): 0..1 estimate of
+ * how well the bot can currently see a position (distance x LOS x light).
+ * Lazily uses sensors/awareness to avoid an import cycle at module load.
+ */
+let _visibilityScore = null;
+export function visibilityAt(bot, pos) {
+    try {
+        if (!_visibilityScore) {
+            // dynamic require would be async; use cached import set at first call
+            return null;
+        }
+        return _visibilityScore(bot, pos);
+    } catch {
+        return null;
+    }
+}
+export function _setVisibilityFn(fn) { _visibilityScore = fn; }
+
 export function playerIntel(bot, maxDistance = 64) {
     const me = posOf(bot.entity);
     if (!me) return [];
@@ -104,6 +123,7 @@ export function playerIntel(bot, maxDistance = 64) {
             sprinting: flags.sprinting,
             heldItem: heldItemName(entity),
             ping: info?.ping ?? null,
+            visibility: visibilityAt(bot, pos),
         });
     }
     out.sort((a, b) => a.distance - b.distance);

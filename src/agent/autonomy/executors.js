@@ -19,6 +19,14 @@ export async function executeToolReplacement(agent, need, cfg = {}) {
     const toolName = need?.detail;
     if (!toolName) return 'tool_replace: no tool specified';
     try {
+        // Resource-waste metrics: a fully broken tool is waste worth tracking.
+        try {
+            const worn = durability.listTools(agent.bot, 1).find(t => t.name === toolName);
+            if (worn?.broken) {
+                const { getMetrics } = await import('../library/metrics.js');
+                getMetrics(agent)?.recordWaste?.('tool_broken', { item: toolName });
+            }
+        } catch { /* metrics advisory */ }
         // import here to avoid a circular import at module load
         const skills = await import('../library/skills.js');
         const msg = await durability.replaceTool(agent.bot, toolName, { craftFn: skills.craftRecipe });

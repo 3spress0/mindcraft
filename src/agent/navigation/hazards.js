@@ -90,6 +90,39 @@ export function scanHazards(bot, { center = null, radius = 12, includeSoft = tru
     return found.slice(0, 64);
 }
 
+/**
+ * Fall-risk evaluation at a position: how far down until solid ground,
+ * and whether that drop would hurt. Water breaks the fall.
+ * (GO list: fall-risk evaluation / fall-damage avoidance.)
+ * @param {object} bot
+ * @param {{x,y,z}} pos - a standing position (feet level)
+ * @param {object} [opts] { maxCheck }
+ * @returns {{risk: 'none'|'hurt'|'lethal'|'void', drop: number, water: boolean}}
+ */
+export function fallRiskAt(bot, pos, { maxCheck = 24 } = {}) {
+    const out = { risk: 'void', drop: maxCheck, water: false };
+    try {
+        const x = Math.floor(pos.x);
+        const z = Math.floor(pos.z);
+        const solid = (name) => name && name !== 'air' && name !== 'cave_air' && !name.includes('water') && !name.includes('lava');
+        for (let dy = 1; dy <= maxCheck; dy++) {
+            const block = bot.blockAt?.({ x, y: Math.floor(pos.y) - dy, z }, false);
+            const name = block?.name ?? 'air';
+            if (name.includes('water')) out.water = true;
+            if (solid(name)) {
+                const drop = dy - 1;
+                out.drop = drop;
+                if (out.water) out.risk = 'none';
+                else if (drop <= 3) out.risk = 'none';
+                else if (drop <= 8) out.risk = 'hurt';
+                else out.risk = 'lethal';
+                return out;
+            }
+        }
+    } catch { /* keep the default (void) */ }
+    return out;
+}
+
 /** Human-readable hazard report for !hazards. */
 export function hazardReport(bot, opts = {}) {
     const hazards = scanHazards(bot, opts);

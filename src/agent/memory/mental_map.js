@@ -115,6 +115,28 @@ export class MentalMap {
         return clean ? this.pois.get(clean) ?? null : null;
     }
 
+    /**
+     * Use remembered preferences (GO list): count deliberate visits so the
+     * bot knows which places it keeps returning to (favorites).
+     * @returns {object|null} the bumped POI
+     */
+    bumpVisit(name) {
+        const poi = this.get(name);
+        if (!poi) return null;
+        poi.visits = (poi.visits ?? 0) + 1;
+        poi.lastVisit = this._now();
+        this.persist();
+        return poi;
+    }
+
+    /** Most-visited POIs (remembered preferences), top first. */
+    favorites(limit = 3) {
+        return [...this.pois.values()]
+            .filter(p => (p.visits ?? 0) > 0)
+            .sort((a, b) => b.visits - a.visits)
+            .slice(0, limit);
+    }
+
     remove(name) {
         const clean = sanitizeName(name);
         if (!clean) return false;

@@ -157,6 +157,39 @@ export class PlanRunner {
         if (this.project) this.store.save(this.project);
         syncProject(this.agent.world_model, this.project);
         this.agent.observation_collector?.saveNow?.();
+        this.writeCheckpoint();
+    }
+
+    /**
+     * Plan checkpoints (GO list): a small, always-current record of where
+     * the plan stands — which step last finished, what is active — so a
+     * restart can announce the resume point and tooling can observe progress
+     * without parsing the whole project file.
+     */
+    writeCheckpoint() {
+        try {
+            if (!this.project) return;
+            const done = this.project.steps.filter(s => s.status === STEP.DONE);
+            const last = done[done.length - 1];
+            const active = this.project.steps.find(s => s.status === STEP.ACTIVE);
+            const checkpoint = {
+                projectId: this.project.id,
+                goal: this.project.goal,
+                iteration: this.project.iteration,
+                status: this.project.status,
+                stepsDone: done.length,
+                stepsTotal: this.project.steps.length,
+                lastCompleted: last ? { id: last.id, title: last.title, at: last.finishedAt } : null,
+                active: active ? { id: active.id, title: active.title, attempt: active.attempts } : null,
+                updatedAt: Date.now()
+            };
+            this.store.saveCheckpoint(checkpoint);
+        } catch { /* checkpointing is advisory */ }
+    }
+
+    /** Read the latest checkpoint (null when none). */
+    readCheckpoint() {
+        try { return this.store.loadCheckpoint(); } catch { return null; }
     }
 
     /** Record verified step results as world-model facts (never throws into loop). */
@@ -343,6 +376,15 @@ export class PlanRunner {
         this.project.replaceRemaining(result.steps, critique.failureClass, result.phases || null);
         if (result.summary) this.project.summary = result.summary;
         this.replanCount += 1;
+        // replan metrics + structured planning log
+        try {
+            const { getMetrics } = await import('../library/metrics.js');
+            getMetrics(this.agent)?.recordReplan?.({ reason: 'critic-replan' });
+        } catch { /* metrics advisory */ }
+        try {
+            const { logEvent } = await import('../library/structlog.js');
+            logEvent(this.agent, 'planning', 'replan', { iteration: this.project?.iteration ?? null, stepsLeft: result.steps.length });
+        } catch { /* logging advisory */ }
         this.persist();
         this.agent.openChat(`Revised plan (${result.steps.length} remaining steps):\n` +
             result.steps.map((s) => {

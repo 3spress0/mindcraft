@@ -99,7 +99,40 @@ const settings = {
         "volatile_half_life_ms": 120000, // confidence halves every 2 minutes unseen
         "village_radius": 48,      // block grid size for merging villager sightings
         "summary_max_lines": 40,   // facts injected into planner prompts
+        "adapter": null            // optional storage adapter for the world model store ({read, write, remove}); null = JSON file
     },
+
+    // Structured JSONL event logs (bots/<name>/events.jsonl): navigation,
+    // perception, planning, inventory, building, world-model, combat events.
+    "structured_logs": {
+        "enabled": true,
+        "categories": null         // null = all; or e.g. ["navigation", "error"]
+    },
+
+    // Resource priorities: which ores/resources to prefer when several
+    // compete (mining target order), and general resource policy.
+    "resources": {
+        "priority": [
+            "ancient_debris", "diamond_ore", "deepslate_diamond_ore", "emerald_ore",
+            "gold_ore", "deepslate_gold_ore", "iron_ore", "deepslate_iron_ore",
+            "redstone_ore", "deepslate_redstone_ore", "lapis_ore", "copper_ore",
+            "coal_ore", "deepslate_coal_ore"
+        ]
+    },
+
+    // Building profiles: how carefully the bot builds.
+    "building": {
+        "profile": "standard"      // meticulous | standard | fast
+    },
+
+    // Confirmation for risky actions: commands like !digDown or !attack ask
+    // for an explicit "confirm" before executing when this is on.
+    "confirm_risky_actions": false,
+
+    // Per-world configuration overrides, merged over the matching settings
+    // keys when the bot is on that server host (or "any" for all worlds).
+    // Example: "worlds": { "localhost": { "autonomy": { "enabled": false } } }
+    "worlds": {},
 
     // Navigation: hazard-aware movement, route caching, and frontier exploration.
     // See src/agent/navigation/.
@@ -113,7 +146,8 @@ const settings = {
         "exploration": {
             "default_legs": 3,      // outward trips per !explore when no count is given
             "max_ring": 12,         // frontier ring cap (ring * 16 blocks out)
-            "profile": "legit"      // movement profile used while exploring
+            "profile": "legit",     // movement profile used while exploring
+            "exploration_profile": "standard" // cautious | standard | bold — how far/boldly the bot ranges out
         }
     },
 
@@ -182,6 +216,9 @@ const settings = {
         "cooldown_s": [20, 60],     // personality-paced seconds between loop runs
         "action_timeout_s": 180,    // hard cap on a single autonomous action
         "history_limit": 16,        // bounded history kept for !autonomyStatus
+        // Scheduled tasks: [{ "at": "dawn"|"dusk"|"HH:MM", "do": "<need kind>" }]
+        // e.g. [{ "at": "dawn", "do": "farm" }] — runs once per Minecraft day.
+        "scheduled": [],
         "needs": {
             "tool_replace_threshold": 0.15, // durability fraction that triggers replacement
             "explore_when_idle": true,      // frontier-explore when idle long enough

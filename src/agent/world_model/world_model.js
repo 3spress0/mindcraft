@@ -196,6 +196,8 @@ export class WorldModel {
         }
         if (expiresIn != null) record.expiresAt = now + Number(expiresIn);
         this.updatedAt = now;
+        // Structured world-model log hook (set by the collector; optional).
+        try { this._onFactChange?.(category, key, existing ? 'merge' : 'record', record); } catch { /* advisory */ }
         return record;
     }
 
@@ -233,7 +235,11 @@ export class WorldModel {
 
     remove(category, idOrKey) {
         if (!this.facts[category]) return;
+        const before = this.facts[category].length;
         this.facts[category] = this.facts[category].filter((f) => f.id !== idOrKey && f.key !== idOrKey);
+        if (this.facts[category].length < before) {
+            try { this._onFactChange?.(category, idOrKey, 'remove', null); } catch { /* advisory */ }
+        }
     }
 
     // ---------- decay / expiry ----------

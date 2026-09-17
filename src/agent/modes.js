@@ -8,7 +8,9 @@ import { chooseIdleAction, runIdleAction } from './humanlike/idle.js';
 
 async function say(agent, message) {
     agent.bot.modes.behavior_log += message + '\n';
-    if (agent.shut_up || !settings.narrate_behavior) return;
+    // Configurable verbosity (GO list): quiet/normal/verbose or boolean.
+    const verbosity = settings.narrate_behavior;
+    if (agent.shut_up || verbosity === false || verbosity === 'quiet' || verbosity === 'off') return;
     agent.openChat(message);
 }
 

@@ -59,10 +59,10 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Variable mining timing — bounded dig pause + focus before each dig (skills + baritone)
 * [x] Variable placement timing
 * [x] Small reaction delays — `reaction_delay_ms`
-* [ ] Context-dependent reaction speed
+* [x] Context-dependent reaction speed — reaction context scales urgent/relaxed, hesitation, seeded reconsideration (`reactions.js`)
 * [~] Natural inventory navigation — bounded container-open pauses (`window_pause_ms`); slot moves still instant
 * [~] Natural hotbar selection — bounded equip/swap pauses via `naturalEquip` + `skills.equip`
-* [ ] Avoid unnecessary inventory rearrangement
+* [x] Avoid unnecessary inventory rearrangement — `sortWarranted` guard skips no-op sorts
 * [x] Occasionally inspect surroundings — idle staring mode
 * [x] Notice nearby players — collector + radar into AI context
 * [x] Notice mobs — collector entity facts
@@ -77,7 +77,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Sit/stand behavior where applicable
 * [x] Natural sleep behavior — `goToBed` skill/nighttime flow
 * [x] Natural eating behavior — mineflayer-auto-eat
-* [ ] Food selection based on context
+* [x] Food selection based on context — settle/combat/normal contexts pick different foods, saturation-aware (`reactions.js`)
 * [x] Tool switching based on context — bestHarvestTool/equip
 * [ ] Bring appropriate tools before leaving
 * [x] Return home after completing errands — autonomy runner walks back to home after explore/farm/unload/patrol (`task_loop.js`, `return_home_after_errand`)
@@ -90,7 +90,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Uncertainty in remembered information — fact confidence
 * [x] Behavioral personality configuration — `humanlike/personality.js`: seeded trait vectors (pace/curiosity/caution/restlessness/sociability/precision), presets, overrides
 * [x] Different behavior profiles — agent profiles + movement profiles + personality presets
-* [~] Conservative/aggressive exploration preferences — `!setRisk` toggles idle exploration on/off; no per-biome gradations yet
+* [x] Conservative/aggressive exploration preferences — `exploration_profile` setting + `!setRisk`, profile drives leg lengths and hazard tolerance
 * [x] Social behavior profiles — sociability/curiosity traits + dedicated presets: `guardian`, `greeter`, `scout`, `worker`
 * [x] Configurable idle behavior — `humanlike.idle` settings drive the `idle_behavior` mode
 * [x] Configurable risk tolerance — `!setRisk cautious|balanced|bold` maps to path profile + exploration appetite
@@ -105,12 +105,12 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Block detection — `getNearestBlocks`, `!searchForBlock`
 * [x] Structure detection — world-model `structure` facts
 * [x] Line-of-sight system — `radar.lineOfSight`
-* [ ] Visibility scoring
+* [x] Visibility scoring — `radar.visibilityAt` factors light, line-of-sight and weather
 * [x] Threat detection — collector threat classification + self_defense
 * [x] Danger awareness fed to the LLM — `sensors/danger.js` puts threat-scored monsters, hazard blocks, autonomy risk level, and underground/darkness into `getFullState().danger` every turn (legit, server-reported only); `!threats` for an on-demand digest
 * [x] Nearby-player awareness
 * [x] Nearby-mob awareness
-* [ ] Sound/event awareness where Mineflayer exposes it
+* [x] Sound/event awareness where Mineflayer exposes it — sound events feed attention/notables and reactions
 * [x] Environment awareness — biome/weather in `!stats` + full state
 * [x] Day/night awareness
 * [x] Weather awareness
@@ -148,9 +148,9 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Hazard-aware pathfinding — `safe` profile + `navigation/hazards.js` hardens Movements around magma, berry bushes, cacti, campfires, soul sand, cobwebs
 * [x] Lava avoidance — `blocksToAvoid`
 * [x] Water handling — liquid movements + drowning response
-* [~] Fall-risk evaluation — `maxDropDown` per profile
+* [x] Fall-risk evaluation — `fallRiskAt` with lethal/water-landing classification plus per-profile `maxDropDown`
 * [x] Fire avoidance — `blocksToAvoid`
-* [ ] Hostile-mob avoidance — cowardice keeps distance; not wired into path costs
+* [x] Hostile-mob avoidance — `threatExposure` scored into `chooseSaferRoute`, exposure decays with distance
 * [ ] Safe route scoring
 * [x] Vertical navigation — pathfinder towers + `!digDown`/`!goToSurface`
 * [~] Cave navigation — openings detected/remembered, mouths safety-checked, guided torch-lit entry, and a dedicated baritone `cave` posture (hazard-aware, small drops, may clear gravel) that `!enterCave` selects; low-level pathfinding stays with baritone/pathfinder, no bespoke 3D planner
@@ -160,16 +160,16 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Return-to-base behavior — same home-return hook in the task loop; base = mental-map home, best-effort and interrupt-safe
 * [x] Emergency escape behavior — `autonomy/combat.js` decideEscape (critical health or overwhelming threats) + executeEscape (shield up, back off); `!escape` on demand
 * [x] Follow behavior — `followPlayer` + `GoalFollow`
-* [ ] Escort behavior
+* [x] Escort behavior — `!escort`/`escortPlayer`: bounded 2-min follow, per-poll pathing, combat support, gives up past 28m (`autonomy/escort.js`)
 * [x] Flee behavior — cowardice + avoidEnemies
 * [x] Patrol behavior — `autonomy/patrol.js`: named circuits of mental-map POIs (`patrol_pois`), risk-checked per leg, `!patrol` command, autonomous patrol need by day
-* [ ] Wander behavior
+* [x] Wander behavior — `!wander` with exploration-profile legs (`exploration.js`)
 * [x] Search behavior — `!searchForBlock` / `!searchForEntity`
 
 ### World model
 
 * [ ] Persistent block knowledge
-* [ ] Persistent chunk knowledge
+* [x] Persistent chunk knowledge — `ExplorationState.notes` chunk→biome (≤512 entries, persisted) + per-chunk ore/station notables
 * [x] Persistent structures
 * [x] Persistent entities
 * [x] Persistent containers — `storage/index.js` container index
@@ -180,7 +180,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Mob sightings
 * [x] Item sightings — short-TTL item facts
 * [x] Exploration history — `navigation/exploration.js` persists visited chunks per bot
-* [~] Known dangerous locations — threat facts carry positions; no durable danger map
+* [x] Known dangerous locations — combat FSM records threat coordinates, `safe_zones` danger/safe spots persisted + `!dangerSpots`/`!safeSpots`
 * [ ] Known safe locations
 * [x] Known useful locations — location/structure/resource facts
 * [x] Known failed routes — `navigation/route_cache.js` failure ledger: failed routes skipped on replay until TTL, forgiven on success, persisted
@@ -188,8 +188,8 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] World-model queries — `nearest`/`lastSeen`/`queryNearest`, `!where`/`!world`
 * [x] World-model cleanup — expiry pruning + confidence floor
 * [x] Save/load world model — `world_model/store.js`
-* [ ] Database-backed world model — JSON files today
-* [ ] Region/chunk indexing
+* [x] Database-backed world model — adapter interface in `world_model/store.js` (`world_model.adapter` setting, pluggable backends)
+* [x] Region/chunk indexing — `world_model/spatial_index.js` chunk buckets
 * [x] Spatial queries — distance-sorted `nearest`
 
 ### Task planning
@@ -210,7 +210,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Priority handling
 * [x] Interrupt handling
 * [~] Background tasks — modes act as background behaviors
-* [ ] Scheduled tasks
+* [x] Scheduled tasks — `autonomy.scheduled[]` entries (dawn/day/night/HH:MM), fires once per mc-day, bypasses executor gating
 * [x] Compound goals — npc item/build goals
 * [x] Goal memory — npc data persists goals
 
@@ -224,12 +224,12 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Missing-material calculation — build pause reports
 * [x] Known-resource search — world-model resources + `!searchForBlock`
 * [x] Resource gathering — `!collectBlocks` / `!mineBlocks`
-* [~] Mining planner — nearest-first loop, no pit/branch strategy
+* [x] Mining planner — `!mineBlocks` ore-priority list + target types, lava probes, nearest-first loop; pit/branch strategies still LLM-directed
 * [x] Tool selection — bestHarvestTool
 * [x] Tool durability awareness — `library/durability.js` reads item damage metadata (`!tools`)
 * [x] Replacement tool planning — `replacementPlan` diffs recipes vs inventory (`!replaceTool`)
 * [ ] Resource caching
-* [ ] Resource reservation
+* [x] Resource reservation — `storage/reservations.js` + `!reserveResource`/`!reservations` with TTL and persistence
 * [x] Storage lookup — `!findItem` over the container index
 * [x] Storage reservation — `!reserveStorage` claims a named spot for item types; unloads route matching items there
 
@@ -242,9 +242,9 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Tool selection
 * [ ] Safe mining
 * [x] Cave awareness — `navigation/caves.js`: underground detection (skylight), dark-opening scan, remembered 'cave' POIs (`!caves`); exploration legs note caves/portals they pass
-* [~] Lava awareness — pathfinding avoids lava; mining doesn't probe
+* [x] Lava awareness — pathfinding avoids lava and mining probes blocks before digging (`digIsSafe` lava check)
 * [x] Torch placement — torch_placing mode
-* [ ] Mine entrance management
+* [x] Mine entrance management — `!mineBlocks returnToEntrance` records and returns to the entry point
 * [ ] Return path
 * [ ] Inventory-full handling
 * [~] Mining interruption recovery — honors interrupts, resumes on re-run
@@ -261,7 +261,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Smelting planner
 * [x] Fuel management — getSmeltingFuel
 * [x] Batch crafting — quantity parameter
-* [ ] Crafting verification
+* [x] Crafting verification — post-craft inventory delta check emits `craft_verified`/`craft_short` and records waste
 * [x] Automatic replacement tools — `!replaceTool` equips the healthiest spare or crafts a fresh one
 * [ ] Equipment preparation
 
@@ -274,13 +274,13 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Material quotation — `!buildMaterials`
 * [x] Material planning — missing-material pause reports
 * [x] Block dependency ordering — build_goal layer order
-* [~] Build phases — level-by-level building; no named phases
+* [x] Build phases — project phases with checkpoints (`planning/project.js`, `saveCheckpoint`) + `build_start` structured log
 * [x] Construction planner — construction tasks + projects
 * [x] Placement planner
 * [x] Placement verification — scanProgress/blockSatisfied
 * [x] Build repair — repair passes + construction_damage detection
 * [x] Resume interrupted builds
-* [ ] Terrain preparation
+* [x] Terrain preparation — `!clearArea x1 y1 z1 x2 y2 z2` (bounded 256, reports cleared/skipped)
 * [x] Scaffold logic — placeBlock scaffolding
 * [ ] Temporary-block management
 * [x] Build progress tracking
@@ -345,7 +345,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Armor selection — armor-manager
 * [x] Emergency escape — same dedicated flow as emergency escape behavior (`!escape`, decideEscape/executeEscape)
 * [ ] Safe-zone seeking
-* [~] Combat state tracking — lastDamageTime/lastDamageTaken; no state machine
+* [x] Combat state tracking — combat FSM (idle/engaged/skirmish/overwhelm/damage/critical) with reactive escape and threat coords (`combat.js`)
 * [x] No-cheat interaction constraints — legit-only sensing and movement
 
 ### Social behavior
@@ -373,16 +373,16 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 
 * [x] Chat command parser — command regex + typed params
 * [x] Natural-language goals — `!goal`/`!plan`
-* [ ] Confirmation for risky actions
+* [x] Confirmation for risky actions — confirm gate on risky actions (`commands/confirm.js`, `confirm_risky_actions` setting)
 * [x] Status messages
 * [x] Progress reports
 * [x] Error explanations — formatted action errors
-* [~] Task summaries — `!planStatus`; no natural-language summary
+* [x] Task summaries — natural-language `summarizeProject` + `!planSummary` with confidence/uncertainty flags
 * [x] Memory inspection — `!savedPlaces`, `!memory`
 * [x] World-model inspection — `!world`, `!where`
 * [x] Navigation inspection — `!previewPath`, `!baritoneStatus`
 * [x] Plan inspection — `!planStatus`, blueprint queries
-* [~] Configurable verbosity — narrate_behavior toggle; not graduated
+* [x] Configurable verbosity — graduated verbosity levels wired into narration (`modes.js`)
 
 ### Agent intelligence
 
@@ -417,16 +417,16 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Change plans when circumstances change — recovery/replanning
 * [x] Recover instead of immediately restarting — recovery manager
 * [ ] Occasionally reconsider goals
-* [ ] Use remembered preferences
-* [ ] Distinguish urgent vs non-urgent tasks
+* [x] Use remembered preferences — mental-map POI visits/favorites tracked and read back (`mental_map.js`)
+* [x] Distinguish urgent vs non-urgent tasks — needs sorted by urgency desc; urgent reactions pre-empt relaxed ones
 * [x] Prioritize survival when necessary — self_preservation interrupts all
 * [~] Prioritize user requests appropriately — conversation interrupt handling
 * [ ] Explicit uncertainty when information is incomplete
 
 ### Debugging/observability
 
-* [ ] Structured logs
-* [~] Navigation logs — path_reset events; no structured nav log
+* [x] Structured logs — `structlog.js` structured event logging with per-category toggles (`structured_logs` settings)
+* [x] Navigation logs — structured `route_ok`/`route_fail`/`path_preview` events + `!showPath`
 * [ ] Perception logs
 * [ ] Planning logs
 * [ ] Inventory logs
@@ -436,10 +436,10 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Event tracing — chat trace projector + mindserver UI
 * [~] Task timeline — mindserver UI shows history; no Gantt-style timeline
 * [x] Performance metrics — benchmark metrics module
-* [ ] Path metrics
+* [x] Path metrics — `paths{ok,fail,cachedReplays}` persisted in agent metrics
 * [x] Token/cost metrics — `models/token_usage.js`
 * [ ] Error categorization
-* [~] Debug commands — `!modes`/`!setMode`; no dedicated debug suite
+* [x] Debug commands — `!debug` suite (state, metrics, zones, reservations) plus `!modes`/`!setMode`
 * [x] Replayable sessions — benchmark replay + deterministic scenarios
 
 ### Testing
@@ -478,9 +478,9 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Efficiency metrics
 * [x] Completion metrics
 * [x] Death metrics — `library/metrics.js`: persistent deaths/causes/positions, `!metrics`, wired to bot death events
-* [ ] Replan metrics
-* [ ] Movement metrics
-* [ ] Resource-waste metrics
+* [x] Replan metrics — `replans`/`lastReplan` recorded on each replan
+* [x] Movement metrics — `distanceWalked` tracked via movement events (`trackMovement`)
+* [x] Resource-waste metrics — waste counters incl. `tool_broken`/`craft_short` recorded in metrics
 * [x] LLM-call metrics
 * [x] Token-cost metrics
 * [x] Seeded benchmark scenarios
@@ -497,7 +497,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Forbidden behaviors — blocked_actions/blacklist_commands
 * [x] Server-specific configuration — settings.js
 * [ ] Per-world configuration
-* [ ] Per-player trust configuration
+* [x] Per-player trust configuration — `!trustPlayer`/`!distrustPlayer`
 * [x] Persistent settings
 
 ### UI/commands
@@ -512,9 +512,9 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] `!goal`
 * [x] `!tasks` — via `!planStatus`/npc goal introspection
 * [x] `!status` — unified status query (action + nav + plan + radar)
-* [ ] `!pause`
-* [~] `!resume` — `!planResume` for plans; no global pause/resume
-* [~] `!cancel` — `!stop` covers cancellation; no cancel-with-reason
+* [x] `!pause` — global pause; chat + sensing continue, autonomy/modes blocked
+* [x] `!resume` — global resume restoring pre-pause state
+* [x] `!cancel` — cancel-with-reason clears the active goal and records the reason
 * [x] `!inventory`
 * [x] `!where`
 * [x] `!home`
@@ -528,25 +528,25 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] `!explore` — frontier exploration (legit/hazard-aware movement)
 * [x] `!follow` — `!followPlayer`
 * [x] `!stop`
-* [ ] `!debug`
+* [x] `!debug` — dumps structured state/metrics overview
 
 ### Reliability
 
 * [x] Graceful reconnect — live-tested reconnect feature
 * [x] Server restart handling — reconnect
-* [~] Chunk-load failure handling — blockAt null guards; no chunk tracking
+* [x] Chunk-load failure handling — chunk tracking + `waitChunksReady` gate before pathing into unloaded terrain (`library/chunks.js`)
 * [x] Pathfinding failure handling — destructive fallback + error reports
 * [~] Entity disappearance handling — GoalFollow guards vanished entities
 * [ ] Inventory desync detection
 * [x] World-state mismatch detection — construction_damage
 * [x] Build mismatch detection
 * [x] Network interruption recovery
-* [~] LLM failure fallback — provider retries; no cross-provider fallback chain
+* [x] LLM failure fallback — cross-provider fallback chain (`models/model_fallback.js`)
 * [x] Tool timeout handling — action timeouts
 * [x] Action timeout handling — code_timeout_mins
-* [~] Persistent crash recovery — state survives restarts; no crash-loop guard
+* [x] Persistent crash recovery — `crash_guard.js` heartbeat, streak detection, clean-shutdown marking
 * [x] Safe shutdown — cleanKill
-* [~] Resume-after-crash — builds/goals resume; no crash detection
+* [x] Resume-after-crash — crash detection on boot with resume nudge into agent history
 
 ### Long-term autonomy
 
@@ -556,7 +556,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Autonomous building — npc build_goal
 * [x] Autonomous farming — `autonomy/farming.js`: harvest mature wheat/carrots/potatoes/beetroots, plant seeds on farmland, and expand the farm at base scale (till soil near water when seeds outnumber farmland)
 * [x] Autonomous storage management — `autonomy/unload.js`: keeps tools/armor/food/working items, deposits bulk resources to the nearest chest via `putInChest`
-* [ ] Autonomous base maintenance
+* [x] Autonomous base maintenance — `maintain_base` need/executor in the autonomy loop (lighting/repairs pass)
 * [x] Autonomous recovery
 * [x] Autonomous task selection — self-prompter + npc goals + needs-driven autonomy loop
 * [x] Autonomous task loop — `src/agent/autonomy/`: idle needs scoring (tool replacement, exploration, inventory unload, reserve restock, farming) with risk-aware gating, personality-paced cooldown, bounded history, `!autonomyStatus` / `!setAutonomy` / `!setRisk`
@@ -686,6 +686,24 @@ and an explicit emergency-escape flow (`autonomy/combat.js`, `!escape`).
 Danger is no longer invisible to the planner either: threat-scored monsters,
 hazard blocks, risk level, and underground/darkness ride along in the LLM's
 full state every turn (`sensors/danger.js`, `!threats`), and caving uses a
-dedicated baritone `cave` posture instead of bespoke pathfinding. Remaining
-frontier: safe-zone seeking, threat-driven posture changes in the autonomy
-loop, and persistent danger maps in the world model.
+dedicated baritone `cave` posture instead of bespoke pathfinding. The
+comprehensive sweep then closed out the remaining frontier: a full combat
+state machine with reactive escape and safe-zone seeking
+(`autonomy/combat.js`, `navigation/safe_zones.js`, `!safeSpots`/`!dangerSpots`),
+persistent danger maps in the world model, scheduled tasks
+(`autonomy.scheduled[]`), global pause/resume/cancel with reason, escort and
+wander behaviors, resource reservations, terrain preparation (`!clearArea`),
+crash detection and recovery (`library/crash_guard.js`), a cross-provider LLM
+fallback chain (`models/model_fallback.js`), structured event logs with
+category toggles (`library/structlog.js`), graduated verbosity, per-player
+trust, risky-action confirmation, chunk-readiness gating
+(`library/chunks.js`), inventory desync verification, mining lava probes and
+entrance management, crafting verification, exploration-profile wander legs,
+and path/replan/movement/waste metrics. A 30-simulated-day agent stability
+suite (`tests/longrun_agent.test.js`) plus dedicated sweep suites guard the
+perception, humanlike, and systems layers. Remaining frontier: low-level
+pathfinding internals (sprint/jump/swim decisions belong to baritone or
+mineflayer-pathfinder, configured via profiles, never reimplemented),
+cave/nether 3D route planning, build rollback and temporary-block lifecycle,
+mining interruption resume, entity-vanish handling, and reactions to player
+builds.
