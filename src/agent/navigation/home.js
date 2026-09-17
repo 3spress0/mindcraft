@@ -11,7 +11,27 @@
  * saves keep working.
  */
 
+import { publishBase, unpublishBase } from './shared_bases.js';
+
 const HOME_KEY = 'home';
+
+/** Best-effort publish of one of this bot's bases to the shared registry. */
+function publish(agent, kind, name, pos) {
+    try {
+        const owner = agent?.bot?.username ?? agent?.name ?? 'bot';
+        const opts = agent?._shared_bases_dir ? { dir: agent._shared_bases_dir } : {};
+        publishBase(owner, kind, name, pos, opts);
+    } catch { /* coordination is optional */ }
+}
+
+/** Best-effort removal from the shared registry. */
+function unpublish(agent, name) {
+    try {
+        const owner = agent?.bot?.username ?? agent?.name ?? 'bot';
+        const opts = agent?._shared_bases_dir ? { dir: agent._shared_bases_dir } : {};
+        unpublishBase(owner, name, opts);
+    } catch { /* coordination is optional */ }
+}
 
 function currentPos(bot) {
     const p = bot?.entity?.position;
@@ -41,6 +61,7 @@ export function setHome(agent) {
         agent.memory_bank?.rememberPlace?.(HOME_KEY, pos.x, pos.y, pos.z);
     } catch { /* memory bank optional */ }
 
+    publish(agent, 'home', HOME_KEY, pos);
     return pos;
 }
 
@@ -104,6 +125,7 @@ export function setOutpost(agent, name) {
         agent._mental_map?.note?.(rounded, { name: `outpost-${clean}`, type: 'base', source: 'told', notes: 'named outpost' });
     } catch { /* mental map optional */ }
 
+    publish(agent, 'outpost', clean, pos);
     return pos;
 }
 
@@ -151,6 +173,7 @@ export function removeOutpost(agent, name) {
         const mem = agent?.memory_bank?.getJson?.();
         if (mem && key in mem) { delete mem[key]; removed = true; }
     } catch { /* optional */ }
+    if (removed) unpublish(agent, clean);
     return removed;
 }
 

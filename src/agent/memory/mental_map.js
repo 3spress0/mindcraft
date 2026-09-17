@@ -17,7 +17,7 @@ import fs from 'fs';
 import path from 'path';
 import * as world from '../library/world.js';
 
-export const POI_TYPES = ['village', 'house', 'base', 'farm', 'storage', 'water', 'cave', 'landmark', 'death', 'player', 'bed', 'spawn', 'custom'];
+export const POI_TYPES = ['village', 'house', 'base', 'farm', 'storage', 'water', 'cave', 'landmark', 'death', 'player', 'bed', 'spawn', 'portal', 'custom'];
 export const MAX_POIS = 64;
 const MERGE_RADIUS = 24; // same-type notes this close merge into one POI
 

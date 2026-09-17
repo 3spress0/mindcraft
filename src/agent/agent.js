@@ -25,6 +25,7 @@ import { createPersonality } from './humanlike/personality.js';
 import { BehaviorStateMachine } from './humanlike/behavior_state.js';
 import { AttentionTracker } from './humanlike/attention.js';
 import { handleSound } from './humanlike/startle.js';
+import { notePortalAt, currentDimension } from './navigation/portals.js';
 import { AutonomyLoop } from './autonomy/task_loop.js';
 import { PlayerLedger } from './social/player_ledger.js';
 import { MetricsTracker, causeFromDeathMessage } from './library/metrics.js';
@@ -906,6 +907,13 @@ export class Agent {
                 if (pos) {
                     this.mental_map?.note(pos, { name: 'spawn-point', type: 'spawn', source: 'observed', notes: 'where I respawned' });
                 }
+                // Dimension change = the server just moved me through a
+                // portal: anchor the arrival point for portal routing.
+                const dim = currentDimension(this);
+                if (this._lastDimension && dim !== this._lastDimension && pos) {
+                    notePortalAt(this, pos, dim, { suffix: '-arrival' });
+                }
+                this._lastDimension = dim;
                 noteBedIfNear(this, { radius: 32 });
             } catch { /* respawn bookkeeping must never throw */ }
         });

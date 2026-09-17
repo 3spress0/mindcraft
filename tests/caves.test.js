@@ -1,0 +1,130 @@
+/**
+ * caves.test.js — cave awareness (GO list: Navigation > cave awareness).
+ */
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { Vec3 } from 'vec3';
+import {
+    isUnderground, scanCaveOpenings, noteCavesIfNear, listCaves, DARK_THRESHOLD
+} from '../src/agent/navigation/caves.js';
+import { MentalMap } from '../src/agent/memory/mental_map.js';
+
+let tmp;
+before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'caves-')); });
+after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+/**
+ * Fake world: registered columns by "x,z"; blockAt resolves floor/ceiling;
+ * lightAt is per-position override (default 15).
+ */
+function caveBot({ openings = [], lights = {} } = {}) {
+    return {
+        entity: { position: new Vec3(0, 64, 0) },
+        findBlocks: () => openings.map(o => new Vec3(o.x, o.y, o.z)),
+        blockAt: (pos) => {
+            for (const o of openings) {
+                if (o.x === pos.x && o.z === pos.z) {
+                    if (pos.y === o.y) return { name: 'air', position: pos };          // the opening
+                    if (pos.y === o.y - 1) return { name: 'stone', position: pos };    // floor
+                    if (pos.y === o.y + 1) return { name: 'air', position: pos };      // open above
+                }
+            }
+            return { name: pos.y <= 63 ? 'stone' : 'air', position: pos };
+        },
+        lightAt: (pos) => lights[`${pos.x},${pos.y},${pos.z}`] ?? 15
+    };
+}
+
+describe('isUnderground', () => {
+    it('detects no skylight overhead', () => {
+        const bot = {
+            entity: { position: new Vec3(0, 20, 0) },
+            blockAt: (pos) => ({ name: 'stone', skyLight: 0, position: pos })
+        };
+        assert.equal(isUnderground(bot), true);
+        const surface = {
+            entity: { position: new Vec3(0, 64, 0) },
+            blockAt: (pos) => ({ name: 'air', skyLight: 15, position: pos })
+        };
+        assert.equal(isUnderground(surface), false);
+    });
+
+    it('is safe with a broken bot', () => {
+        assert.equal(isUnderground({}), false);
+        assert.equal(isUnderground({ entity: null }), false);
+    });
+});
+
+describe('scanCaveOpenings', () => {
+    it('finds dark walk-in openings, sorted by distance', () => {
+        const bot = caveBot({
+            openings: [
+                { x: 20, y: 64, z: 0 },  // far
+                { x: 4, y: 64, z: 0 }    // near
+            ],
+            lights: { '4,64,0': 2, '20,64,0': 1 }
+        });
+        const scan = scanCaveOpenings(bot, { radius: 32 });
+        assert.deepEqual(scan.map(s => s.x), [4, 20]);
+        assert.ok(scan.every(s => s.light <= DARK_THRESHOLD));
+    });
+
+    it('skips lit openings (not caves) and unopenable holes', () => {
+        const bot = caveBot({
+            openings: [
+                { x: 3, y: 64, z: 0 },   // lit -> skip
+                { x: 5, y: 64, z: 0 }    // covered above -> skip
+            ],
+            lights: { '3,64,0': 14 }
+        });
+        bot.blockAt = (pos) => {
+            if (pos.x === 5 && pos.z === 0 && pos.y === 65) return { name: 'stone', position: pos };
+            return caveBot({ openings: [{ x: 3, y: 64, z: 0 }, { x: 5, y: 64, z: 0 }] }).blockAt(pos);
+        };
+        bot.lightAt = (pos) => (pos.x === 3 ? 14 : 1);
+        assert.equal(scanCaveOpenings(bot, {}).length, 0);
+    });
+
+    it('respects maxOpenings and survives missing light API', () => {
+        const many = Array.from({ length: 12 }, (_, i) => ({ x: i + 1, y: 64, z: 0 }));
+        const bot = caveBot({ openings: many });
+        bot.lightAt = () => 0; // everything dark
+        const scan = scanCaveOpenings(bot, { maxOpenings: 5 });
+        assert.equal(scan.length, 5);
+        const noLight = caveBot({ openings: [{ x: 2, y: 64, z: 0 }] });
+        delete noLight.lightAt;
+        assert.equal(scanCaveOpenings(noLight, {}).length, 0, 'unknown light -> assumed safe (15)');
+    });
+});
+
+describe('noteCavesIfNear / listCaves', () => {
+    it('notes caves once and reads them back', () => {
+        const map = new MentalMap({ botName: 'CaveBot', dir: tmp });
+        const agent = {
+            bot: caveBot({ openings: [{ x: 6, y: 64, z: 0 }] }),
+            _mental_map: map
+        };
+        agent.bot.lightAt = () => 0;
+        const noted = noteCavesIfNear(agent, {});
+        assert.equal(noted, 1);
+        const again = noteCavesIfNear(agent, {});
+        assert.equal(again, 0, 'deduplicated on second pass');
+        const caves = listCaves(agent);
+        assert.equal(caves.length, 1);
+        assert.match(caves[0].name, /^cave-/);
+    });
+
+    it('also records a world-model fact', () => {
+        const facts = { location: [] };
+        const agent = {
+            bot: caveBot({ openings: [{ x: 9, y: 64, z: 1 }] }),
+            world_model: { record: (kind, fact) => facts.location.push(fact) }
+        };
+        agent.bot.lightAt = () => 2;
+        noteCavesIfNear(agent, {});
+        assert.ok(facts.location.some(f => f.key?.startsWith('cave:') && f.kind === 'cave'));
+    });
+});

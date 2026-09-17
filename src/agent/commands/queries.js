@@ -16,6 +16,9 @@ import { getMentalMap } from '../memory/mental_map.js';
 import { recall, recallSummary } from '../memory/recall.js';
 import { getHome } from '../navigation/home.js';
 import { hazardReport, scanHazards } from '../navigation/hazards.js';
+import { listCaves } from '../navigation/caves.js';
+import { listPortals, planPortalTrip, notePortalsIfNear } from '../navigation/portals.js';
+import { listSharedBases } from '../navigation/shared_bases.js';
 import * as skills from '../library/skills.js';
 import { toolsReport } from '../library/durability.js';
 
@@ -676,6 +679,60 @@ export const queryList = [
                 lines.push('Cannot be placed (no block item, skipped at build): ' + formatMaterialCounts(info.skipped, 50));
             }
             return pad(lines.join('\n'));
+        }
+    },
+    {
+        name: '!caves',
+        description: 'List remembered cave openings (dark surface openings noted in the mental map).',
+        params: {},
+        perform: function (agent) {
+            const caves = listCaves(agent);
+            if (!caves.length) return pad('I have not noted any cave openings yet.');
+            const lines = caves.slice(0, 12).map(c => `- ${c.name} at (${Math.round(c.x)}, ${Math.round(c.y)}, ${Math.round(c.z)})`);
+            return pad('Cave openings I remember:\n' + lines.join('\n'));
+        }
+    },
+    {
+        name: '!portals',
+        description: 'List remembered nether portals (observed portal blocks, per dimension).',
+        params: {},
+        perform: function (agent) {
+            notePortalsIfNear(agent, { radius: 32 });
+            const portals = listPortals(agent);
+            if (!portals.length) return pad('I have not seen any nether portals yet.');
+            const lines = portals.slice(0, 8).map(p => `- ${p.name} at (${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)}) [${p.notes ?? ''}]`);
+            return pad('Portals I remember:\n' + lines.join('\n'));
+        }
+    },
+    {
+        name: '!portalPlan',
+        description: 'Plan a nether-route trip to overworld coordinates using the 1:8 portal shortcut, e.g. !portalPlan 800 -300.',
+        params: {
+            'x': { type: 'int', description: 'Overworld x coordinate.' },
+            'z': { type: 'int', description: 'Overworld z coordinate.' }
+        },
+        perform: function (agent, x, z) {
+            const plan = planPortalTrip(agent, { x: Number(x), z: Number(z) });
+            if (!plan.netherTarget) return pad(plan.steps.join('\n'));
+            const lines = [
+                `Portal plan to (${x}, ${z}):`,
+                ...plan.steps.map((s, i) => `${i + 1}. ${s}`)
+            ];
+            return pad(lines.join('\n'));
+        }
+    },
+    {
+        name: '!sharedBases',
+        description: 'List every base published to the shared multi-agent registry (all bots\' homes and outposts).',
+        params: {},
+        perform: function (agent) {
+            const dir = agent?._shared_bases_dir;
+            const bases = listSharedBases(dir ? { dir } : {});
+            if (!bases.length) return pad('No shared bases published yet (bots publish when they !sethome / !setOutpost).');
+            const lines = bases.slice(0, 16).map(b =>
+                `- ${b.owner} — ${b.kind} "${b.name}" at (${b.x}, ${b.y}, ${b.z})`
+            );
+            return pad('Shared bases:\n' + lines.join('\n'));
         }
     },
 ];

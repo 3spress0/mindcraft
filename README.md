@@ -560,7 +560,41 @@ explore differently but each bot is reproducible.
 ```
 
 Exploration stops cleanly on interruption, records chunks reached per leg, and
-expands the ring automatically once the current one is fully visited.
+expands the ring automatically once the current one is fully visited. Along
+the way it also notes what it passes — dark cave openings and nether portals
+become durable POIs automatically.
+
+## Caves & portals
+
+`caves.js` finds caves the legit way — the server already reports air and
+light: a dark walk-in opening (air with solid ground, open above, light ≤ 4)
+is remembered as a `cave` POI (`!caves`), and `isUnderground` knows when the
+bot has no skylight over its head.
+
+`portals.js` does the same for nether portals: observed `nether_portal`
+blocks are clustered into one portal per frame, remembered per dimension
+(`!portals`), and when the server moves the bot between dimensions the
+arrival point is anchored as a portal. Trip planning uses the classic 1:8
+shortcut — `!portalPlan 800 -300` returns step-by-step guidance folding in
+any portal the bot already knows.
+
+```text
+!caves              # remembered cave openings
+!portals            # remembered nether portals (per dimension)
+!portalPlan 800 -300
+```
+
+## Shared bases (multi-agent)
+
+Every bot publishes its home and outposts to one shared registry
+(`bots/shared/bases.json`) the moment they are set — no extra server traffic,
+just local coordination. Any bot can see where its companions live with
+`!sharedBases` and route to the nearest one (`nearestSharedBase`). Publishing
+is best-effort: a bot with no write access still works, just alone.
+
+```text
+!sharedBases
+```
 
 # Tool Durability & Replacement
 

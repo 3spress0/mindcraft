@@ -134,10 +134,11 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Named locations — `!rememberHere` / `!savedPlaces`
 * [x] Home location — `!sethome` / `!home`
 * [x] Multi-base / outpost management — `navigation/home.js`: named outposts (`!setOutpost`/`!outposts`/`!removeOutpost`) stored like home + mental-map 'base' POIs; `nearestBase` drives return-home and base upkeep
+* [x] Multi-agent outpost coordination — `navigation/shared_bases.js`: every bot publishes homes/outposts to a shared file registry (`bots/shared/bases.json`); any bot can list companions' bases (`!sharedBases`) and route to the nearest one
 * [x] Storage location — container index + named storage spots (`!nameStorage`/`!storageSpots`)
 * [x] Mine locations — world-model resource deposits
 * [x] Village locations — world-model locations + village benchmark
-* [ ] Portal locations
+* [x] Portal locations — `navigation/portals.js`: observed portal blocks clustered and remembered as 'portal' POIs per dimension (`!portals`), dimension-change arrivals anchored automatically
 * [x] Build locations — persisted `npc.data.built` corners
 * [ ] Safe-zone locations
 * [x] Route caching — `navigation/route_cache.js`: successful paths remembered and replayed (wired into `skills.goToGoal`)
@@ -151,10 +152,10 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Hostile-mob avoidance — cowardice keeps distance; not wired into path costs
 * [ ] Safe route scoring
 * [x] Vertical navigation — pathfinder towers + `!digDown`/`!goToSurface`
-* [ ] Cave navigation
+* [~] Cave navigation — cave openings detected, remembered, and surfaced (`navigation/caves.js`, `!caves`); no dedicated 3D pathfinding yet
 * [x] Surface navigation — `goToSurface`
 * [~] Nether navigation — dimension-aware + nether benchmark scenario; no dedicated logic
-* [ ] Portal routing
+* [x] Portal routing — `navigation/portals.js` planPortalTrip: 1:8 overworld↔nether coordinate math, remembered portals folded into step-by-step trip guidance (`!portalPlan`)
 * [x] Return-to-base behavior — same home-return hook in the task loop; base = mental-map home, best-effort and interrupt-safe
 * [~] Emergency escape behavior — `moveAway`/`avoidEnemies`; no dedicated escape flow
 * [x] Follow behavior — `followPlayer` + `GoalFollow`
@@ -239,7 +240,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Ore prioritization
 * [x] Tool selection
 * [ ] Safe mining
-* [ ] Cave awareness
+* [x] Cave awareness — `navigation/caves.js`: underground detection (skylight), dark-opening scan, remembered 'cave' POIs (`!caves`); exploration legs note caves/portals they pass
 * [~] Lava awareness — pathfinding avoids lava; mining doesn't probe
 * [x] Torch placement — torch_placing mode
 * [ ] Mine entrance management
@@ -671,5 +672,10 @@ to blend vector similarity into keyword search. The base now raises animals
 too (`autonomy/husbandry.js`, `!breedAnimals`), hazard-aware navigation picks
 deliberately between viable routes with a seeded touch of variety
 (`navigation/route_choice.js`), and loud sounds startle the bot into looking
-(`humanlike/startle.js`). Remaining frontier: nether-side base logistics,
-multi-agent outpost coordination, and deeper cave navigation.
+(`humanlike/startle.js`). Caves and portals enter the world knowledge:
+dark openings are detected and remembered (`navigation/caves.js`, `!caves`),
+observed nether portals become per-dimension POIs with arrival anchors
+(`navigation/portals.js`, `!portals`), and the 1:8 shortcut is planned
+step-by-step (`!portalPlan`). Multiple bots coordinate through a shared base
+registry (`navigation/shared_bases.js`, `!sharedBases`). Remaining frontier:
+dedicated 3D cave pathfinding, in-nether route following, and combat polish.

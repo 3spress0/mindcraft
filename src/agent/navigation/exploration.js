@@ -16,6 +16,8 @@ import { createRng } from '../humanlike/rng.js';
 import { gotoGoal } from '../baritone/baritone.js';
 import { scanHazards } from './hazards.js';
 import { avoidZonesFromHazards, inAvoidZone } from './route_choice.js';
+import { noteCavesIfNear } from './caves.js';
+import { notePortalsIfNear } from './portals.js';
 
 export const CHUNK_SIZE = 16;
 export const MAX_VISITED = 2048;
@@ -219,6 +221,10 @@ export async function explore(agent, opts = {}) {
         state.legs += 1;
         completed += 1;
         state.persist(bot.username || agent?.name || 'bot');
+        // what did this leg pass? remember cave openings and portals (cheap,
+        // best-effort — the mental map deduplicates by name/proximity)
+        try { noteCavesIfNear(agent, { radius: 16, maxOpenings: 2 }); } catch { /* optional */ }
+        try { notePortalsIfNear(agent, { radius: 16 }); } catch { /* optional */ }
     }
 
     const newChunks = state.visitedCount - chunksBefore;
