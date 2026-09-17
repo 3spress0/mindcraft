@@ -21,10 +21,13 @@ export class MetricsTracker {
         this.sessionStart = now();
         /** cumulative across sessions */
         this.deaths = 0;
+        this.respawns = 0;
         /** cause -> count */
         this.causes = {};
         /** { t, cause, x, y, z } */
         this.lastDeath = null;
+        /** { t, x, y, z } */
+        this.lastRespawn = null;
         /** sessions observed (increments on construction with a persisted file) */
         this.sessions = 1;
         this.load();
@@ -69,6 +72,20 @@ export class MetricsTracker {
         return true;
     }
 
+    /** Record a respawn (server moved the bot to a spawn point). */
+    recordRespawn({ pos = null } = {}) {
+        this.respawns += 1;
+        const prev = this.lastRespawn ?? {};
+        this.lastRespawn = {
+            t: this._now(),
+            x: pos?.x != null ? Math.round(pos.x * 10) / 10 : prev.x ?? null,
+            y: pos?.y != null ? Math.round(pos.y * 10) / 10 : prev.y ?? null,
+            z: pos?.z != null ? Math.round(pos.z * 10) / 10 : prev.z ?? null
+        };
+        this.persist();
+        return this.lastRespawn;
+    }
+
     uptimeMs() {
         return Math.max(0, this._now() - this.sessionStart);
     }
@@ -93,6 +110,12 @@ export class MetricsTracker {
         } else {
             lines.push('Last death: none — still alive out there');
         }
+        if (this.lastRespawn) {
+            const where = this.lastRespawn.x != null ? ` at (${this.lastRespawn.x}, ${this.lastRespawn.y}, ${this.lastRespawn.z})` : '';
+            lines.push(`Respawns: ${this.respawns}, last${where}`);
+        } else {
+            lines.push(`Respawns: ${this.respawns}`);
+        }
         const mins = Math.round(this.uptimeMs() / 60000);
         lines.push(`Session uptime: ${mins} min, death rate: ${this.deathRatePerHour()}/h`);
         return lines.join('\n');
@@ -105,8 +128,10 @@ export class MetricsTracker {
             const tmp = `${fp}.tmp`;
             fs.writeFileSync(tmp, JSON.stringify({
                 deaths: this.deaths,
+                respawns: this.respawns,
                 causes: this.causes,
                 lastDeath: this.lastDeath,
+                lastRespawn: this.lastRespawn,
                 sessions: this.sessions
             }, null, 2));
             fs.renameSync(tmp, fp);
@@ -118,8 +143,10 @@ export class MetricsTracker {
         try {
             const data = JSON.parse(fs.readFileSync(this.filePath(), 'utf8'));
             this.deaths = Number(data?.deaths) || 0;
+            this.respawns = Number(data?.respawns) || 0;
             this.causes = (data?.causes && typeof data.causes === 'object') ? data.causes : {};
             this.lastDeath = data?.lastDeath ?? null;
+            this.lastRespawn = data?.lastRespawn ?? null;
             this.sessions = (Number(data?.sessions) || 0) + 1;
             return true;
         } catch { return false; }

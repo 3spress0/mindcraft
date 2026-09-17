@@ -11,7 +11,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Persistent world model — `src/agent/world_model/` + `store.js`
 * [x] Short-term memory — `src/agent/history.js` conversation buffer
 * [x] Long-term world memory — `memory_bank.js`, learned skills, persisted world model
-* [~] Semantic memory — embedding model configurable per profile; retrieval not wired
+* [~] Semantic memory — local deterministic spatial retrieval wired (`memory/recall.js`, `!recall`); embedding-based retrieval not wired
 * [x] Entity memory — world-model `entity` facts via observation collector
 * [x] Location/waypoint memory — `memory_bank.js` + world-model `location` facts
 * [x] Mental map (POI notes) — `memory/mental_map.js`: durable village/house/base/farm/storage notes the LLM authors with `!notePlace` and reads via `!memory`/`!pois`/`!goToPoi`; deaths auto-noted
@@ -291,8 +291,8 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Item-location database — index maps items → container positions
 * [x] Deposit logic — `!putInChest`
 * [x] Withdraw logic — `!takeFromChest`
-* [ ] Sorting
-* [ ] Stack management
+* [~] Sorting — category manifests + consolidation via `!organizeChest`; full slot-order sorting pending
+* [x] Stack management — `storage/tidying.js` detects scattered partial stacks and consolidates them (withdraw + re-deposit)
 * [x] Storage optimization — unload balances deposits across multiple chests by estimated free capacity (`storage/balancing.js`)
 * [x] Overflow handling — `inventory_full` need auto-unloads with multi-chest balancing, reservations, and spot routing
 * [x] Named storage locations — `storage/placement.js` registry, persisted per bot
@@ -308,7 +308,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Tool durability management — durability-aware swaps in `skills.breakBlockAt`/`baritone.mineBlocks` (never dig with a nearly-dead tool)
 * [x] Bed detection — goToBed
 * [~] Sleep planning — sleeps when told/nighttime via skills; no proactive plan
-* [~] Respawn-point awareness — death position remembered; bed spawn not tracked
+* [x] Respawn-point awareness — respawn events tracked in metrics; nearest bed auto-noted as respawn anchor (`!findBed`, POI types `bed`/`spawn`)
 * [x] Fire/lava emergency handling — self_preservation bucket logic
 * [ ] Fall-damage avoidance
 * [~] Suffocation detection — unstuck mode handles being stuck
@@ -468,7 +468,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Navigation benchmark — `tests/navigation_benchmark.test.js`: replay integrity, cache hygiene, hazard hardening, safe route selection, frontier consistency
 * [x] Building benchmark — shelter_build/construction scenarios
 * [ ] Recovery benchmark
-* [ ] Storage benchmark
+* [x] Storage benchmark — `tests/storage_benchmark.test.js`: unload policy at scale, balanced spreads, reservations under load, tidy plans, fetch coverage, recall ranking
 * [x] Survival benchmark — `tests/survival_benchmark.test.js`: multi-day decision suite (needs + risk gating)
 * [x] Multi-step task benchmark — scenario suite
 * [x] Humanlike-behavior benchmark — `tests/humanlike_benchmark.test.js`: 8 deterministic scenarios (interrupt-resume, route staleness, frontier coverage, need prioritization, reaction spam resistance, delay envelopes, idle stability, glance bounds)
@@ -649,6 +649,10 @@ steers around hazard avoid-zones (`navigation/route_choice.js`), deaths
 are tracked persistently (`library/metrics.js`, `!metrics`), the bot keeps a
 durable mental map of POIs (`memory/mental_map.js`, `!notePlace`/`!pois`),
 `!fetchItem` retrieves stored items by routing to their indexed containers,
-and a deterministic navigation benchmark guards the movement layer. Remaining
-frontier: chest-side sorting/stack management, semantic-memory retrieval,
-LLM-in-the-loop scenario benchmarks, and bed-spawn/respawn awareness.
+and a deterministic navigation benchmark guards the movement layer, chests
+get tidied and stack-consolidated (`storage/tidying.js`, `!organizeChest`),
+respawn points and bed anchors are tracked (`!findBed`, metrics respawns),
+and spatial memory is searchable (`memory/recall.js`, `!recall`) with a
+storage benchmark guarding the whole layer. Remaining frontier: full
+slot-order chest sorting, embedding-based semantic retrieval, LLM-in-the-loop
+scenario benchmarks, and autonomous base maintenance.

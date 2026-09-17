@@ -736,6 +736,46 @@ withdraws until satisfied — reporting exactly which chests it visited.
 !fetchItem bread            # get every stored bread (-1 = all)
 ```
 
+# Chest Tidying & Stack Management
+
+Chests the bot uses a lot accumulate scattered partial stacks of the same
+item. `src/agent/storage/tidying.js` detects them and consolidates exactly
+the way a player would — withdraw the item entirely and re-deposit it, which
+lets vanilla merge the stacks. No slot-packet tricks; ordinary container
+windows only.
+
+```text
+!organizeChest              # tidy the nearest chest within 16 blocks
+```
+
+The module also produces category manifests (tools / armor / food / resources
+/ blocks) so the LLM can reason about what a chest is for.
+
+# Respawn & Bed Awareness
+
+The bot tracks where the server puts it after death: every respawn bumps the
+metrics counter, records the position, and notes a `spawn` POI in the mental
+map. Beds anchor respawns, so the bot scans for one and notes the nearest as
+its respawn anchor — automatically on login/respawn, or on demand:
+
+```text
+!findBed                    # scan for a bed and note it as respawn anchor
+!metrics                    # respawns are listed alongside deaths
+```
+
+# Spatial Recall
+
+`src/agent/memory/recall.js` wires retrieval into the bot's spatial memory:
+search everything it knows about places — mental map POIs, saved memory-bank
+places, named storage spots — with a free-text query. Scoring is local and
+deterministic (no embedding service): exact name > name substring > type >
+notes, ties broken by distance from the bot.
+
+```text
+!recall village blacksmith  # ranked matches across all spatial memory
+!recall iron storage
+```
+
 # Legit Awareness (Radar)
 
 Borrowing the *information* side of utility clients like Meteor Client and

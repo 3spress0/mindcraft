@@ -15,10 +15,18 @@
 
 import fs from 'fs';
 import path from 'path';
+import * as world from '../library/world.js';
 
-export const POI_TYPES = ['village', 'house', 'base', 'farm', 'storage', 'water', 'cave', 'landmark', 'death', 'player', 'custom'];
+export const POI_TYPES = ['village', 'house', 'base', 'farm', 'storage', 'water', 'cave', 'landmark', 'death', 'player', 'bed', 'spawn', 'custom'];
 export const MAX_POIS = 64;
 const MERGE_RADIUS = 24; // same-type notes this close merge into one POI
+
+/** All 16 bed colors — used to find the bot's respawn point (legit scan). */
+export const BED_TYPES = [
+    'white_bed', 'orange_bed', 'magenta_bed', 'light_blue_bed', 'yellow_bed',
+    'lime_bed', 'pink_bed', 'gray_bed', 'light_gray_bed', 'cyan_bed',
+    'purple_bed', 'blue_bed', 'brown_bed', 'green_bed', 'red_bed', 'black_bed'
+];
 
 function sanitizeName(name) {
     const clean = String(name ?? '').trim().replace(/[^A-Za-z0-9_ ./-]/g, '').slice(0, 32);
@@ -227,4 +235,27 @@ export function getMentalMap(agent) {
         agent._mental_map = new MentalMap({ botName });
     }
     return agent._mental_map;
+}
+
+/**
+ * Scan for beds near the bot and note the nearest one as the respawn anchor
+ * (legit: bed blocks the server reports). Returns the noted POI or null.
+ */
+export function noteBedIfNear(agent, { radius = 32 } = {}) {
+    const bot = agent?.bot;
+    const map = getMentalMap(agent);
+    if (!bot || !map) return null;
+    try {
+        const bed = world.getNearestBlock(bot, BED_TYPES, radius);
+        if (bed?.position) {
+            const res = map.note(bed.position, {
+                name: 'bed',
+                type: 'bed',
+                source: 'observed',
+                notes: `${bed.name} — respawn anchor`
+            });
+            return res?.poi ?? null;
+        }
+    } catch { /* bed scan is best-effort */ }
+    return null;
 }

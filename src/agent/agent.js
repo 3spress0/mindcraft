@@ -27,7 +27,7 @@ import { AttentionTracker } from './humanlike/attention.js';
 import { AutonomyLoop } from './autonomy/task_loop.js';
 import { PlayerLedger } from './social/player_ledger.js';
 import { MetricsTracker, causeFromDeathMessage } from './library/metrics.js';
-import { MentalMap } from './memory/mental_map.js';
+import { MentalMap, noteBedIfNear } from './memory/mental_map.js';
 import { ReactionGate, detectSocialEvents, reactionMessage } from './social/reactions.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
@@ -210,6 +210,7 @@ export class Agent {
             this.mental_map = new MentalMap({ botName: this.name || 'bot' });
             this.bot._mental_map = this.mental_map;
             this.mental_map.seedFromAgent(this);
+            noteBedIfNear(this, { radius: 32 }); // respawn anchor awareness
         } catch (e) {
             console.error('Mental map init failed:', e);
             this.mental_map = null;
@@ -894,6 +895,18 @@ export class Agent {
             try {
                 this.metrics?.recordDeath({ pos: this.bot.entity?.position });
             } catch { /* metrics must never break death handling */ }
+        });
+        this.bot.on('respawn', () => {
+            // Respawn awareness: where did the server put me, and is there a
+            // bed anchoring it? Both feed metrics and the mental map.
+            try {
+                const pos = this.bot.entity?.position;
+                this.metrics?.recordRespawn({ pos });
+                if (pos) {
+                    this.mental_map?.note(pos, { name: 'spawn-point', type: 'spawn', source: 'observed', notes: 'where I respawned' });
+                }
+                noteBedIfNear(this, { radius: 32 });
+            } catch { /* respawn bookkeeping must never throw */ }
         });
         this.bot.on('kicked', (reason) => {
             if (!this._disconnectHandled) {

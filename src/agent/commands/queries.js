@@ -13,6 +13,7 @@ import { getStorageIndex, saveStorageIndex } from '../storage/index.js';
 import { getSpotRegistry } from '../storage/placement.js';
 import { getMetrics } from '../library/metrics.js';
 import { getMentalMap } from '../memory/mental_map.js';
+import { recall, recallSummary } from '../memory/recall.js';
 import { getHome } from '../navigation/home.js';
 import { hazardReport, scanHazards } from '../navigation/hazards.js';
 import * as skills from '../library/skills.js';
@@ -362,6 +363,17 @@ export const queryList = [
             const metrics = getMetrics(agent);
             if (!metrics) return pad('Metrics not available (bot not ready).');
             return pad(metrics.summarize());
+        }
+    },
+    {
+        name: "!recall",
+        description: "Search the bot's spatial memory — mental map POIs, saved places, storage spots, home — with a free-text query, ranked by relevance then distance.",
+        params: {
+            'query': { type: 'string', description: 'What to remember, e.g. "village blacksmith", "iron storage", "base".' },
+        },
+        perform: function (agent, query) {
+            const hits = recall(agent, query);
+            return pad(recallSummary(query, hits));
         }
     },
     {

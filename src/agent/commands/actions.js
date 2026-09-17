@@ -12,8 +12,9 @@ import { explore } from '../navigation/exploration.js';
 import { replaceTool } from '../library/durability.js';
 import { RISK_PRESETS } from '../humanlike/personality.js';
 import { getSpotRegistry } from '../storage/placement.js';
-import { getMentalMap, POI_TYPES } from '../memory/mental_map.js';
+import { getMentalMap, POI_TYPES, noteBedIfNear } from '../memory/mental_map.js';
 import { planFetch, executeFetch } from '../storage/fetch.js';
+import { executeTidy } from '../storage/tidying.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -819,6 +820,28 @@ export const actionsList = [
             }
             const result = await executeFetch(agent, item_name, want);
             return result;
+        }
+    },
+    {
+        name: '!organizeChest',
+        description: 'Tidy the nearest chest (within 16 blocks): consolidate scattered partial stacks of the same item by withdrawing and re-depositing them so vanilla merges the stacks.',
+        perform: async function (agent) {
+            const chest = world.getNearestBlock(agent.bot, 'chest', 16);
+            if (!chest) return 'No chest within 16 blocks — stand next to the chest to organize.';
+            const code = await agent.actions.runAction('action:organizeChest', async () => {
+                agent._tidy_result = await executeTidy(agent.bot, chest);
+            }, {});
+            if (code?.interrupted) return 'Interrupted while organizing.';
+            return agent._tidy_result ?? 'Done organizing.';
+        }
+    },
+    {
+        name: '!findBed',
+        description: 'Scan for a bed nearby and note it in the mental map as the respawn anchor.',
+        perform: async function (agent) {
+            const poi = noteBedIfNear(agent, { radius: 32 });
+            if (!poi) return 'No bed found within 32 blocks.';
+            return `Found ${poi.notes ?? 'a bed'} at (${poi.x}, ${poi.y}, ${poi.z}) — noted as respawn anchor.`;
         }
     },
     {

@@ -78,6 +78,17 @@ describe('MetricsTracker', () => {
         assert.equal(m.deaths, 0);
     });
 
+    it('records respawns and persists them', () => {
+        const m1 = tracker('RespawnBot');
+        m1.recordRespawn({ pos: { x: 1.24, y: 64, z: -2.5 } });
+        m1.recordRespawn();
+        assert.equal(m1.respawns, 2);
+        assert.equal(m1.lastRespawn.x, 1.2);
+        const m2 = tracker('RespawnBot');
+        assert.equal(m2.respawns, 2);
+        assert.match(m2.summarize(), /Respawns: 2, last at \(1\.2, 64, -2\.5\)/);
+    });
+
     it('computes uptime and death rate', () => {
         let t = 1000000;
         const m = tracker('RateBot', () => t);

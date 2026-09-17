@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { MentalMap, getMentalMap, POI_TYPES, MAX_POIS } from '../src/agent/memory/mental_map.js';
+import { Vec3 } from 'vec3';
+import { MentalMap, getMentalMap, POI_TYPES, MAX_POIS, noteBedIfNear, BED_TYPES } from '../src/agent/memory/mental_map.js';
 
 let tmp;
 before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mentalmap-')); });
@@ -64,7 +65,7 @@ describe('MentalMap basics', () => {
     });
 
     it('covers the documented POI types', () => {
-        for (const t of ['village', 'house', 'base', 'farm', 'storage', 'water', 'cave', 'landmark', 'death', 'custom']) {
+        for (const t of ['village', 'house', 'base', 'farm', 'storage', 'water', 'cave', 'landmark', 'death', 'player', 'bed', 'spawn', 'custom']) {
             assert.ok(POI_TYPES.includes(t), `${t} missing`);
         }
     });
@@ -152,6 +153,49 @@ describe('seedFromAgent', () => {
         m.seedFromAgent(agent);
         const hit = m.nearestTo({ x: 3, y: 64, z: 4 }, { type: 'storage' });
         assert.ok(hit);
+    });
+});
+
+describe('bed / respawn awareness', () => {
+    it('knows all 16 bed colors', () => {
+        assert.equal(BED_TYPES.length, 16);
+        assert.ok(BED_TYPES.includes('red_bed'));
+        assert.ok(BED_TYPES.includes('white_bed'));
+    });
+
+    it('notes the nearest bed as the respawn anchor', () => {
+        const bedPos = new Vec3(4, 64, 2);
+        const bedBlock = { name: 'red_bed', position: bedPos };
+        const agent = {
+            bot: {
+                username: 'BedBot',
+                entity: { position: new Vec3(0, 64, 0) },
+                findBlocks: () => [bedPos],
+                blockAt: () => bedBlock
+            },
+            _mental_map: new MentalMap({ botName: 'BedBot', dir: tmp })
+        };
+        const poi = noteBedIfNear(agent, { radius: 32 });
+        assert.ok(poi);
+        assert.equal(poi.type, 'bed');
+        assert.equal(poi.x, 4);
+        assert.match(poi.notes, /red_bed/);
+        // scanning again merges rather than duplicates
+        noteBedIfNear(agent, { radius: 32 });
+        assert.equal(agent._mental_map.list({ type: 'bed' }).length, 1);
+    });
+
+    it('returns null when no bed is near', () => {
+        const agent = {
+            bot: {
+                username: 'NoBedBot',
+                entity: { position: new Vec3(0, 64, 0) },
+                findBlocks: () => [],
+                blockAt: () => null
+            },
+            _mental_map: new MentalMap({ botName: 'NoBedBot', dir: tmp })
+        };
+        assert.equal(noteBedIfNear(agent), null);
     });
 });
 
