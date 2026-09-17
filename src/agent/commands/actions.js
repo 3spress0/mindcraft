@@ -18,6 +18,9 @@ import { executeTidy } from '../storage/tidying.js';
 import { executeSort } from '../storage/sorting.js';
 import { resolvePatrolStops, executePatrol } from '../autonomy/patrol.js';
 import { planBreeding, executeBreeding } from '../autonomy/husbandry.js';
+import { enterCave } from '../navigation/caves.js';
+import { executePortalTrip } from '../navigation/portals.js';
+import { decideEscape, executeEscape } from '../autonomy/combat.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -898,6 +901,52 @@ export const actionsList = [
             }, {});
             if (code?.interrupted) return 'Breeding interrupted.';
             return `Bred ${agent._breed_result ?? 0} pair(s) (${summary}).`;
+        }
+    },
+    {
+        name: '!enterCave',
+        description: 'Check a remembered cave opening for danger, light the entrance if a torch is carried, and walk to it, e.g. !enterCave cave-20,4.',
+        params: {
+            'name': { type: 'string', description: 'Cave name from !caves (substring matches).' },
+        },
+        perform: async function (agent, name) {
+            if (!String(name ?? '').trim()) return 'Which cave? See !caves.';
+            const code = await agent.actions.runAction('action:enterCave', async () => {
+                agent._cave_result = await enterCave(agent, name);
+            }, {});
+            if (code?.interrupted) return 'Cave entry interrupted.';
+            return agent._cave_result ?? 'Done.';
+        }
+    },
+    {
+        name: '!travelViaNether',
+        description: 'Travel to overworld coordinates using the 1:8 nether shortcut: walk to a known portal, cross, and follow the nether-side route, e.g. !travelViaNether 800 -300. Requires a known portal (!portals).',
+        params: {
+            'x': { type: 'int', description: 'Overworld x coordinate.' },
+            'z': { type: 'int', description: 'Overworld z coordinate.' }
+        },
+        perform: async function (agent, x, z) {
+            const dest = { x: Number(x), z: Number(z) };
+            if (!Number.isFinite(dest.x) || !Number.isFinite(dest.z)) return 'Usage: !travelViaNether <x> <z> (overworld coordinates).';
+            const code = await agent.actions.runAction('action:travelViaNether', async () => {
+                agent._nether_result = await executePortalTrip(agent, dest);
+            }, {});
+            if (code?.interrupted) return 'Nether travel interrupted.';
+            const res = agent._nether_result;
+            return res ? `${res.ok ? 'OK' : 'Stopped'} (${res.step}): ${res.message}` : 'No result.';
+        }
+    },
+    {
+        name: '!escape',
+        description: 'Emergency disengage: shield up (if carried) and back away from nearby threats. The bot also decides this on its own at low health.',
+        params: {},
+        perform: async function (agent) {
+            const decision = decideEscape(agent.bot, {});
+            const code = await agent.actions.runAction('action:escape', async () => {
+                agent._escape_result = await executeEscape(agent, {});
+            }, {});
+            if (code?.interrupted) return 'Escape interrupted.';
+            return `${agent._escape_result ?? 'escape: disengaged'} (reason: ${decision.reason})`;
         }
     },
     {

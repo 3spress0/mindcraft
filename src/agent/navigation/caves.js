@@ -8,6 +8,7 @@
  */
 
 import { Vec3 } from 'vec3';
+import * as world from '../library/world.js';
 
 /** Light level at or below which an opening counts as "dark inside". */
 export const DARK_THRESHOLD = 4;
@@ -67,7 +68,7 @@ export function scanCaveOpenings(bot, { radius = 24, maxOpenings = 8 } = {}) {
 }
 
 function caveName(pos) {
-    return `cave-${Math.round(pos.x)},${Math.round(pos.z)}`;
+    return `cave-${Math.round(pos.x)}-${Math.round(pos.z)}`;
 }
 
 /**
@@ -117,4 +118,79 @@ export function listCaves(agent) {
         }
     } catch { /* optional */ }
     return out;
+}
+
+/** Blocks that make a cave mouth dangerous to walk into. */
+export const CAVE_DANGERS = ['lava', 'fire', 'magma_block'];
+
+/**
+ * Safety check around a cave opening: how much lava/fire is close, and how
+ * dark the mouth is. Pure given the server-reported world.
+ * @returns {{lavaNear: number, dangers: string[], lightLevel: number, safe: boolean}}
+ */
+export function assessCaveSafety(bot, pos, { radius = 8 } = {}) {
+    let dangers = [];
+    try { dangers = bot.findBlocks?.({ matching: () => true, maxDistance: radius, count: 128 }) ?? []; }
+    catch { dangers = []; }
+    const hazards = [];
+    for (const p of dangers) {
+        try {
+            const b = bot.blockAt?.(p);
+            if (b?.name && CAVE_DANGERS.includes(b.name)) {
+                const d = Math.hypot(p.x - pos.x, p.y - pos.y, p.z - pos.z);
+                if (d <= radius) hazards.push(b.name);
+            }
+        } catch { /* skip */ }
+    }
+    const lightLevel = lightLevelAt(bot, pos);
+    return {
+        lavaNear: hazards.filter(h => h === 'lava').length,
+        dangers: hazards,
+        lightLevel,
+        safe: hazards.length === 0
+    };
+}
+
+/**
+ * Guided cave entry (GO list: cave navigation groundwork): look up the cave
+ * by name, check the mouth for lava/fire, drop a torch at the entrance when
+ * one is carried, then walk in with the current movement profile.
+ * @returns {Promise<string>} human-readable summary
+ */
+export async function enterCave(agent, name, { torch = true } = {}) {
+    const bot = agent?.bot;
+    if (!bot) return 'cave: no bot';
+    const skills = await import('../library/skills.js');
+    const caves = listCaves(agent);
+    const clean = String(name ?? '').trim().toLowerCase();
+    const cave = caves.find(c => String(c.name).toLowerCase() === clean)
+        ?? caves.find(c => String(c.name).toLowerCase().includes(clean));
+    if (!cave) return `cave: I don't remember a cave called "${name}". See !caves.`;
+
+    const safety = assessCaveSafety(bot, cave, {});
+    if (!safety.safe) {
+        return `cave: "${cave.name}" mouth looks dangerous (${safety.dangers.join(', ')} within 8 blocks) — not entering.`;
+    }
+
+    const steps = [`safety ok (light ${safety.lightLevel})`];
+    if (torch) {
+        try {
+            const counts = world.getInventoryCounts(bot);
+            if ((counts.torch ?? 0) > 0) {
+                const ok = await skills.equip(bot, 'torch');
+                if (ok) {
+                    const floor = bot.blockAt?.(new Vec3(Math.round(cave.x), Math.round(cave.y) - 1, Math.round(cave.z)));
+                    if (floor && floor.name !== 'air') await bot.placeBlock(floor, new Vec3(0, 1, 0));
+                    steps.push('torch placed at the entrance');
+                }
+            }
+        } catch { steps.push('torch placement skipped'); }
+    }
+    try {
+        await skills.goToPosition(bot, cave.x, cave.y, cave.z, 2);
+        steps.push('at the cave mouth');
+    } catch {
+        return `cave: could not reach "${cave.name}" right now`;
+    }
+    return `cave: entered "${cave.name}" — ${steps.join(', ')}`;
 }

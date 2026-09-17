@@ -138,6 +138,89 @@ export function overworldCounterpart(pos) {
 }
 
 /**
+ * Wait until the bot is standing in `dim`, polling the server-reported game
+ * state. Injectable sleep for tests.
+ * @returns {Promise<boolean>} true when the dimension matched within the timeout
+ */
+export async function waitForDimension(agent, dim, { timeoutMs = 20000, pollMs = 250, sleep = null } = {}) {
+    const wait = sleep ?? ((ms) => new Promise(r => setTimeout(r, ms)));
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (currentDimension(agent) === dim) return true;
+        await wait(pollMs);
+    }
+    return currentDimension(agent) === dim;
+}
+
+/**
+ * Execute a portal trip toward an overworld destination, one leg at a time:
+ * walk to a known portal, wait for the server-side transition, then walk the
+ * nether-side counterpart coordinates (and use a known destination-side
+ * portal when one exists). No teleporting — only normal walking + portals.
+ *
+ * opts.goToPosition / opts.sleep are injectable for tests.
+ * @returns {Promise<{ok: boolean, step: string, message: string}>}
+ */
+export async function executePortalTrip(agent, dest, { timeoutMs = 20000, pollMs = 250, goToPosition = null, sleep = null } = {}) {
+    const bot = agent?.bot;
+    if (!bot) return { ok: false, step: 'start', message: 'No bot.' };
+    if (!dest || typeof dest.x !== 'number' || typeof dest.z !== 'number') {
+        return { ok: false, step: 'start', message: 'Need an overworld destination {x, z}.' };
+    }
+    const skills = goToPosition ? null : await import('../library/skills.js');
+    const walk = goToPosition ?? ((b, x, y, z, d) => skills.goToPosition(b, x, y, z, d));
+    const startDim = currentDimension(agent);
+    const nTarget = netherCounterpart(dest);
+
+    if (startDim !== 'the_nether') {
+        const portal = listPortals(agent, startDim)[0];
+        if (!portal) return { ok: false, step: 'find-portal', message: 'I do not know a portal here — build and light one first, then try again.' };
+        try { await walk(bot, portal.x, portal.y, portal.z, 1); }
+        catch { return { ok: false, step: 'reach-portal', message: `Could not reach the portal "${portal.name}".` }; }
+        const crossed = await waitForDimension(agent, 'the_nether', { timeoutMs, pollMs, sleep });
+        if (!crossed) return { ok: false, step: 'transition', message: 'Stood in the portal but no transition happened (timeout).' };
+
+        const y = bot.entity?.position?.y ?? 64;
+        try { await walk(bot, nTarget.x, y, nTarget.z, 4); }
+        catch { return { ok: false, step: 'nether-walk', message: `Could not walk to nether coords (${nTarget.x}, ${nTarget.z}).` }; }
+
+        const arrivalPortal = listPortals(agent, 'the_nether')
+            .find(p => Math.hypot(p.x - nTarget.x, p.z - nTarget.z) <= 32);
+        if (arrivalPortal) {
+            try { await walk(bot, arrivalPortal.x, arrivalPortal.y, arrivalPortal.z, 1); } catch { /* stand and hope */ }
+            const back = await waitForDimension(agent, startDim, { timeoutMs, pollMs, sleep });
+            if (back) return { ok: true, step: 'arrived', message: `Came through the nether — should be near (${Math.round(dest.x)}, ${Math.round(dest.z)}).` };
+            return { ok: false, step: 'final-transition', message: 'Reached the nether-side portal but no transition happened (timeout).' };
+        }
+        return {
+            ok: true, step: 'nether-side',
+            message: `At nether coords (${nTarget.x}, ${nTarget.z}); build/light a portal here to surface near (${Math.round(dest.x)}, ${Math.round(dest.z)}).`
+        };
+    }
+
+    // starting in the nether: head for the portal nearest the counterpart spot
+    const nPortals = listPortals(agent, 'the_nether');
+    let best = null;
+    for (const p of nPortals) {
+        const d = Math.hypot(p.x - nTarget.x, p.z - nTarget.z);
+        if (!best || d < best.d) best = { p, d };
+    }
+    if (!best) {
+        try { await walk(bot, nTarget.x, bot.entity?.position?.y ?? 64, nTarget.z, 4); }
+        catch { return { ok: false, step: 'nether-walk', message: 'Could not walk through the nether.' }; }
+        return {
+            ok: true, step: 'nether-side',
+            message: `No known portal near the target; walked to (${nTarget.x}, ${nTarget.z}) — build/light a portal here to surface near (${Math.round(dest.x)}, ${Math.round(dest.z)}).`
+        };
+    }
+    try { await walk(bot, best.p.x, best.p.y, best.p.z, 1); }
+    catch { return { ok: false, step: 'reach-portal', message: `Could not reach the portal "${best.p.name}".` }; }
+    const back = await waitForDimension(agent, 'overworld', { timeoutMs, pollMs, sleep });
+    if (back) return { ok: true, step: 'arrived', message: `Came through the nether — should be near (${Math.round(dest.x)}, ${Math.round(dest.z)}).` };
+    return { ok: false, step: 'final-transition', message: 'Stood in the portal but no transition happened (timeout).' };
+}
+
+/**
  * Plan a portal trip to an overworld destination. Pure planning — returns
  * explicit steps the bot (or player) can follow. Uses remembered portals
  * when it knows them.

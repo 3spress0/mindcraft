@@ -8,7 +8,8 @@ import os from 'os';
 import path from 'path';
 import { Vec3 } from 'vec3';
 import {
-    isUnderground, scanCaveOpenings, noteCavesIfNear, listCaves, DARK_THRESHOLD
+    isUnderground, scanCaveOpenings, noteCavesIfNear, listCaves, DARK_THRESHOLD,
+    assessCaveSafety, enterCave
 } from '../src/agent/navigation/caves.js';
 import { MentalMap } from '../src/agent/memory/mental_map.js';
 
@@ -126,5 +127,66 @@ describe('noteCavesIfNear / listCaves', () => {
         agent.bot.lightAt = () => 2;
         noteCavesIfNear(agent, {});
         assert.ok(facts.location.some(f => f.key?.startsWith('cave:') && f.kind === 'cave'));
+    });
+});
+
+describe('cave safety & guided entry', () => {
+    it('assessCaveSafety flags lava/fire at the mouth', () => {
+        const bot = caveBot({ openings: [{ x: 6, y: 64, z: 0 }] });
+        // lava pool right next to the opening
+        bot.findBlocks = () => [new Vec3(7, 63, 0), new Vec3(6, 64, 0)];
+        bot.blockAt = (pos) => {
+            if (pos.x === 7 && pos.y === 63) return { name: 'lava', position: pos };
+            if (pos.x === 6 && pos.y === 64) return { name: 'air', position: pos };
+            return { name: 'stone', position: pos };
+        };
+        const safety = assessCaveSafety(bot, { x: 6, y: 64, z: 0 }, {});
+        assert.equal(safety.safe, false);
+        assert.equal(safety.lavaNear, 1);
+        assert.deepEqual(safety.dangers, ['lava']);
+    });
+
+    it('a clean mouth is safe', () => {
+        const bot = caveBot({ openings: [{ x: 6, y: 64, z: 0 }] });
+        bot.lightAt = () => 2;
+        const safety = assessCaveSafety(bot, { x: 6, y: 64, z: 0 }, {});
+        assert.equal(safety.safe, true);
+        assert.equal(safety.lightLevel, 2);
+    });
+
+    it('enterCave refuses unknown caves and dangerous mouths', async () => {
+        const map = new MentalMap({ botName: 'EntryBot', dir: tmp });
+        map.note({ x: 6, y: 64, z: 0 }, { name: 'cave-6-0', type: 'cave' });
+        const bot = caveBot({ openings: [{ x: 6, y: 64, z: 0 }] });
+        bot.findBlocks = () => [new Vec3(7, 63, 0)];
+        bot.blockAt = (pos) => (pos.x === 7 && pos.y === 63)
+            ? { name: 'lava', position: pos }
+            : caveBot({ openings: [{ x: 6, y: 64, z: 0 }] }).blockAt(pos);
+        const agent = { bot, _mental_map: map };
+
+        assert.match(await enterCave(agent, 'nowhere'), /don't remember/);
+        assert.match(await enterCave(agent, 'cave-6-0'), /dangerous \(lava/);
+    });
+
+    it('enterCave lights the entrance and walks to a safe cave', async () => {
+        const map = new MentalMap({ botName: 'EntryBot2', dir: tmp });
+        map.note({ x: 9, y: 64, z: 3 }, { name: 'cave-9-3', type: 'cave' });
+        const bot = caveBot({ openings: [{ x: 9, y: 64, z: 3 }] });
+        bot.lightAt = () => 1;
+        bot.inventory = { slots: [{ name: 'torch', slot: 5, count: 3, type: 5 }] };
+        bot.game = { gameMode: 'survival' };
+        bot.modes = { isOn: (m) => m === 'cheat' }; // goToPosition teleports
+        bot.chat = () => {};
+        bot._personality = {};
+        bot.equip = async () => {};
+        const placed = [];
+        bot.placeBlock = async (block) => { placed.push(block.position); };
+
+        const agent = { bot, _mental_map: map };
+        const msg = await enterCave(agent, 'cave-9-3');
+        assert.match(msg, /entered "cave-9-3"/);
+        assert.match(msg, /torch placed at the entrance/);
+        assert.match(msg, /at the cave mouth/);
+        assert.equal(placed.length, 1, 'torch placed on the entrance floor');
     });
 });

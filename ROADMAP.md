@@ -152,12 +152,12 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Hostile-mob avoidance — cowardice keeps distance; not wired into path costs
 * [ ] Safe route scoring
 * [x] Vertical navigation — pathfinder towers + `!digDown`/`!goToSurface`
-* [~] Cave navigation — cave openings detected, remembered, and surfaced (`navigation/caves.js`, `!caves`); no dedicated 3D pathfinding yet
+* [~] Cave navigation — openings detected/remembered, mouths safety-checked for lava/fire, guided torch-lit entry (`navigation/caves.js`, `!caves`/`!enterCave`); no dedicated 3D pathfinding yet
 * [x] Surface navigation — `goToSurface`
 * [~] Nether navigation — dimension-aware + nether benchmark scenario; no dedicated logic
-* [x] Portal routing — `navigation/portals.js` planPortalTrip: 1:8 overworld↔nether coordinate math, remembered portals folded into step-by-step trip guidance (`!portalPlan`)
+* [x] Portal routing — `navigation/portals.js`: 1:8 coordinate math, step-by-step guidance (`!portalPlan`) AND execution (`executePortalTrip`, `!travelViaNether`): walk to a known portal, wait out the server-side transition, follow the nether-side route — no teleporting
 * [x] Return-to-base behavior — same home-return hook in the task loop; base = mental-map home, best-effort and interrupt-safe
-* [~] Emergency escape behavior — `moveAway`/`avoidEnemies`; no dedicated escape flow
+* [x] Emergency escape behavior — `autonomy/combat.js` decideEscape (critical health or overwhelming threats) + executeEscape (shield up, back off); `!escape` on demand
 * [x] Follow behavior — `followPlayer` + `GoalFollow`
 * [ ] Escort behavior
 * [x] Flee behavior — cowardice + avoidEnemies
@@ -336,13 +336,13 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 ### Combat/defense
 
 * [x] Hostile-mob detection
-* [ ] Threat scoring
+* [x] Threat scoring — `autonomy/combat.js`: per-mob threat table × distance falloff → scored, sorted threat list with clear/skirmish/danger/overwhelm levels
 * [x] Defensive behavior — self_defense mode
 * [x] Retreat behavior — cowardice mode
-* [ ] Shield handling
+* [x] Shield handling — combatReady equips the best carried weapon plus a shield on the off-hand (used by the escape flow and `!escape`)
 * [x] Weapon selection — equipHighestAttack
 * [x] Armor selection — armor-manager
-* [ ] Emergency escape
+* [x] Emergency escape — same dedicated flow as emergency escape behavior (`!escape`, decideEscape/executeEscape)
 * [ ] Safe-zone seeking
 * [~] Combat state tracking — lastDamageTime/lastDamageTaken; no state machine
 * [x] No-cheat interaction constraints — legit-only sensing and movement
@@ -677,5 +677,10 @@ dark openings are detected and remembered (`navigation/caves.js`, `!caves`),
 observed nether portals become per-dimension POIs with arrival anchors
 (`navigation/portals.js`, `!portals`), and the 1:8 shortcut is planned
 step-by-step (`!portalPlan`). Multiple bots coordinate through a shared base
-registry (`navigation/shared_bases.js`, `!sharedBases`). Remaining frontier:
-dedicated 3D cave pathfinding, in-nether route following, and combat polish.
+registry (`navigation/shared_bases.js`, `!sharedBases`). Cave mouths are
+safety-checked and entered with a torch (`!enterCave`), the nether shortcut
+is not just planned but executed leg by leg (`!travelViaNether`), and combat
+is polished defensively: per-mob threat scoring, weapon + shield readiness,
+and an explicit emergency-escape flow (`autonomy/combat.js`, `!escape`).
+Remaining frontier: dedicated 3D cave pathfinding, safe-zone seeking, and
+threat-driven posture changes in the autonomy loop.

@@ -576,12 +576,23 @@ blocks are clustered into one portal per frame, remembered per dimension
 (`!portals`), and when the server moves the bot between dimensions the
 arrival point is anchored as a portal. Trip planning uses the classic 1:8
 shortcut — `!portalPlan 800 -300` returns step-by-step guidance folding in
-any portal the bot already knows.
+any portal the bot already knows — and `!travelViaNether 800 -300`
+**executes** it leg by leg: walk to a known portal, wait out the server-side
+transition, then follow the nether-side route (surfacing through a known
+arrival portal when one exists, or advising where to build one). No
+teleporting — only normal walking and portal use.
+
+Cave mouths are entered deliberately: `!enterCave <name>` checks the opening
+for lava/fire/magma within 8 blocks, drops a torch at the entrance when one
+is carried, and only then walks in. Dangerous mouths are refused with a
+reason.
 
 ```text
 !caves              # remembered cave openings
+!enterCave cave-20-4
 !portals            # remembered nether portals (per dimension)
 !portalPlan 800 -300
+!travelViaNether 800 -300
 ```
 
 ## Shared bases (multi-agent)
@@ -740,6 +751,24 @@ server already provides.
 !nameStorage tools    # remember the nearest chest as "tools"
 !storageSpots         # list remembered storage spots
 !reserveStorage tools iron_ingot,gold_ingot   # route these items to "tools"
+```
+
+# Defensive Combat Readiness
+
+`src/agent/autonomy/combat.js` makes the bot's combat side deliberate and
+defensive — sensing only what the server reports:
+
+* **Threat scoring** — every hostile in range is scored from a per-mob table
+  (creepers and vindicators weigh more than zombies) with distance falloff,
+  then bucketed: `clear` / `skirmish` / `danger` / `overwhelm`.
+* **Combat readiness** — `combatReady` holds the best carried weapon and
+  puts a shield on the off-hand when one exists.
+* **Emergency escape** — `decideEscape` flees on critical health or an
+  overwhelming threat score; `executeEscape` shields up and backs away.
+  `!escape` triggers it on demand; the flow never throws.
+
+```text
+!escape             # shield up (if carried) and disengage
 ```
 
 # Survival Metrics
