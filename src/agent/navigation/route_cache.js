@@ -100,6 +100,7 @@ export class RouteCache {
         this.maxEntries = maxEntries ?? cfg.maxEntries;
         this._now = now;
         this.entries = new Map(); // key -> { waypoints, cost, savedAt }
+        this.failures = new Map(); // key -> { count, lastAt } — known failed routes
     }
 
     load() {
@@ -112,6 +113,11 @@ export class RouteCache {
                     this.entries.set(key, entry);
                 }
             }
+            for (const [key, fail] of Object.entries(data.failures ?? {})) {
+                if (now - (fail.lastAt ?? 0) <= this.ttlMs && Number(fail.count) > 0) {
+                    this.failures.set(key, { count: Number(fail.count), lastAt: Number(fail.lastAt) });
+                }
+            }
         } catch (err) {
             console.error(`[route-cache] load failed: ${err.message}`);
         }
@@ -121,7 +127,11 @@ export class RouteCache {
     persist() {
         try {
             fs.mkdirSync(this.dir, { recursive: true });
-            const payload = { version: 1, entries: Object.fromEntries(this.entries) };
+            const payload = {
+                version: 1,
+                entries: Object.fromEntries(this.entries),
+                failures: Object.fromEntries(this.failures)
+            };
             const tmp = `${this.fp}.${process.pid}.tmp`;
             fs.writeFileSync(tmp, JSON.stringify(payload));
             fs.renameSync(tmp, this.fp);
@@ -157,6 +167,45 @@ export class RouteCache {
         const key = routeKey(from, to, profile);
         if (!key) return false;
         const had = this.entries.delete(key);
+        if (had) this.persist();
+        return had;
+    }
+
+    /** Remember that a route attempt failed (GO list: known failed routes). */
+    recordFailure(from, to, profile) {
+        const key = routeKey(from, to, profile);
+        if (!key) return null;
+        const prev = this.failures.get(key) ?? { count: 0, lastAt: 0 };
+        const entry = { count: prev.count + 1, lastAt: this._now() };
+        this.failures.set(key, entry);
+        if (this.failures.size > this.maxEntries) {
+            const ordered = [...this.failures.entries()].sort((a, b) => a[1].lastAt - b[1].lastAt);
+            for (let i = 0; i < ordered.length && this.failures.size > this.maxEntries; i++) {
+                this.failures.delete(ordered[i][0]);
+            }
+        }
+        this.persist();
+        return entry;
+    }
+
+    /** A failed route stays "known failed" until the TTL passes. */
+    isKnownFailure(from, to, profile) {
+        const key = routeKey(from, to, profile);
+        if (!key) return false;
+        const fail = this.failures.get(key);
+        if (!fail) return false;
+        if (this._now() - fail.lastAt > this.ttlMs) {
+            this.failures.delete(key);
+            return false;
+        }
+        return true;
+    }
+
+    /** A successful trip forgives the route. */
+    clearFailure(from, to, profile) {
+        const key = routeKey(from, to, profile);
+        if (!key) return false;
+        const had = this.failures.delete(key);
         if (had) this.persist();
         return had;
     }

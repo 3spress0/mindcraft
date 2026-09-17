@@ -73,11 +73,11 @@ describe('spatial recall engine', () => {
         assert.ok(kinds.has('storage'));
     });
 
-    it('recall handles empty queries and unknown terms', () => {
+    it('recall handles empty queries and unknown terms', async () => {
         const agent = { bot: { username: 'EmptyRecallBot', entity: { position: new Vec3(0, 64, 0) } } };
-        assert.deepEqual(recall(agent, ''), []);
-        assert.deepEqual(recall(agent, '!!'), []);
-        assert.deepEqual(recall(agent, 'zzz_unknown'), []);
+        assert.deepEqual(await recall(agent, ''), []);
+        assert.deepEqual(await recall(agent, '!!'), []);
+        assert.deepEqual(await recall(agent, 'zzz_unknown'), []);
     });
 });
 
@@ -113,9 +113,43 @@ describe('tidying + recall commands', () => {
             bot: { username: 'RecallCmdBot', entity: { position: new Vec3(0, 64, 0) } },
             _mental_map: map
         };
-        const out = cmd.perform(agent, 'village');
+        const out = await cmd.perform(agent, 'village');
         assert.match(out, /RECALL "village"/);
         assert.match(out, /pine-village/);
-        assert.match(cmd.perform(agent, 'nothing-here'), /don't remember/);
+        assert.match(await cmd.perform(agent, 'nothing-here'), /don't remember/);
+    });
+});
+
+describe('embedding-augmented recall', () => {
+    function agentWithProvider(provider) {
+        const map = new MentalMap({ botName: 'EmbeddingRecallBot', dir: tmp });
+        map.note(new Vec3(0, 64, 0), { name: 'camp', type: 'campsite', notes: ['firepit'] });
+        map.note(new Vec3(500, 64, 0), { name: 'old-farm', type: 'farm', notes: ['wheat rows'] });
+        map.note(new Vec3(-500, 64, 0), { name: 'distant-camp', type: 'campsite', notes: ['abandoned'] });
+        return {
+            bot: { username: 'EmbeddingRecallBot', entity: { position: new Vec3(0, 64, 0) } },
+            _mental_map: map,
+            _embedding_provider: provider
+        };
+    }
+
+    it('blends an embedding provider score into the ranking', async () => {
+        // Provider treats "night camp" as semantically close to distant-camp's notes only.
+        const provider = {
+            async embed(text) {
+                return text.includes('abandoned') ? [1, 0] : [0, 0];
+            }
+        };
+        const hits = await recall(agentWithProvider(provider), 'distant camp');
+        assert.equal(hits[0].name, 'distant-camp', 'vector-boosted doc should outrank the plain keyword near-camp tie');
+        assert.ok(hits[0].score > hits[1].score);
+    });
+
+    it('falls back to keywords when the provider fails or is absent', async () => {
+        const broken = { async embed() { throw new Error('offline'); } };
+        const withBroken = await recall(agentWithProvider(broken), 'camp');
+        const plain = await recall(agentWithProvider(null), 'camp');
+        assert.equal(withBroken.length, plain.length, 'provider failure must not lose results');
+        assert.equal(withBroken[0].name, 'camp');
     });
 });

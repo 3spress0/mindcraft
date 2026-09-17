@@ -1248,7 +1248,10 @@ export async function goToGoal(bot, goal) {
         if (routeStart && routeEnd && await tryReplayCachedRoute(bot, goal, profile, routeStart, routeEnd)) {
             return true;
         }
-    } catch (e) { /* caching must never break navigation */ }
+    } catch (e) {
+        // the cached route failed in-world: remember it as a known failure
+        try { getRouteCache(bot)?.recordFailure(routeStart, routeEnd, profile); } catch { void 0; }
+    }
 
     const nonDestructiveMovements = new pf.Movements(bot);
     const dontBreakBlocks = ['glass', 'glass_pane'];
@@ -1291,9 +1294,12 @@ export async function goToGoal(bot, goal) {
         await bot.pathfinder.goto(goal);
         clearInterval(doorCheckInterval);
         rememberRoute(bot, profile, routeStart, routeEnd, foundPath);
+        try { getRouteCache(bot)?.clearFailure(routeStart, routeEnd, profile); } catch { void 0; }
         return true;
     } catch (err) {
         clearInterval(doorCheckInterval);
+        // remember the failure so we don't keep retrying the same dead route
+        try { getRouteCache(bot)?.recordFailure(routeStart, routeEnd, profile); } catch { void 0; }
         // we need to catch so we can clean up the door check interval, then rethrow the error
         throw err;
     }
@@ -1323,11 +1329,13 @@ function getRouteCache(bot) {
 async function tryReplayCachedRoute(bot, goal, profile, from, to) {
     const cache = getRouteCache(bot);
     if (!cache) return false;
+    if (cache.isKnownFailure(from, to, profile)) return false; // don't retry recently failed routes
     const entry = cache.get(from, to, profile);
     if (!entry) return false;
     const check = verifyRoute(bot, entry.waypoints);
     if (!check.valid) {
         cache.invalidate(from, to, profile);
+        cache.recordFailure(from, to, profile);
         return false;
     }
 

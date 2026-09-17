@@ -16,6 +16,7 @@ import { getMentalMap, POI_TYPES, noteBedIfNear } from '../memory/mental_map.js'
 import { planFetch, executeFetch } from '../storage/fetch.js';
 import { executeTidy } from '../storage/tidying.js';
 import { executeSort } from '../storage/sorting.js';
+import { resolvePatrolStops, executePatrol } from '../autonomy/patrol.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -843,6 +844,24 @@ export const actionsList = [
             const poi = noteBedIfNear(agent, { radius: 32 });
             if (!poi) return 'No bed found within 32 blocks.';
             return `Found ${poi.notes ?? 'a bed'} at (${poi.x}, ${poi.y}, ${poi.z}) — noted as respawn anchor.`;
+        }
+    },
+    {
+        name: '!patrol',
+        description: 'Walk a loop between known places from the mental map (POI names or "home"), e.g. !patrol home my-base storage-tools. Risk-checked per leg.',
+        params: {
+            'stops': { type: 'string', description: 'Space or comma separated stop names (POIs from !pois, or "home").' },
+        },
+        perform: async function (agent, stops) {
+            const names = String(stops ?? '').split(/[,\s]+/).filter(Boolean);
+            if (names.length < 2) return 'Patrol needs at least two stops (POI names or "home").';
+            const { stops: resolved, missing } = resolvePatrolStops(agent, names);
+            if (missing.length) return `Unknown patrol stop(s): ${missing.join(', ')} — see !pois.`;
+            const code = await agent.actions.runAction('action:patrol', async () => {
+                agent._patrol_result = await executePatrol(agent, { stops: resolved, maxLegs: Math.min(12, resolved.length + 1) });
+            }, {});
+            if (code?.interrupted) return 'Patrol interrupted.';
+            return agent._patrol_result ?? 'Patrol complete.';
         }
     },
     {

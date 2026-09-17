@@ -22,9 +22,13 @@ import { isEdible } from './unload.js';
 import { farmSnapshot } from './farming.js';
 import { assessLocalRisk, filterNeedsByRisk, riskLine } from './risk.js';
 import { scanDarkSpots } from './base.js';
+import { executePatrolNeed } from './patrol.js';
 import { getHome } from '../navigation/home.js';
 import * as world from '../library/world.js';
 import convoManager from '../conversation.js';
+
+/** Errands after which the bot walks back home (when one is set). */
+export const RETURN_HOME_KINDS = new Set(['explore', 'farm', 'inventory_full', 'patrol']);
 
 export function getAutonomyConfig() {
     const block = settings.autonomy ?? {};
@@ -40,7 +44,9 @@ export function getAutonomyConfig() {
         farm_radius: block.needs?.farm_radius ?? 16,
         max_harvest: block.needs?.max_harvest ?? 16,
         max_plants: block.needs?.max_plants ?? 24,
-        maintain_radius: block.needs?.maintain_radius ?? 8
+        maintain_radius: block.needs?.maintain_radius ?? 8,
+        return_home_after_errand: block.needs?.return_home_after_errand ?? true,
+        patrol_pois: Array.isArray(block.needs?.patrol_pois) ? block.needs.patrol_pois : []
     };
     const [lo, hi] = Array.isArray(block.cooldown_s) && block.cooldown_s.length === 2
         ? block.cooldown_s : [20, 60];
@@ -85,6 +91,7 @@ export function snapshotNeeds(agent, cfg) {
             darkSpots = scanDarkSpots(bot, { center: home, radius: cfg.needs.maintain_radius ?? 8 }).length;
         } catch { darkSpots = 0; }
     }
+    const patrolReady = Array.isArray(cfg.needs.patrol_pois) && cfg.needs.patrol_pois.length >= 2;
     return {
         tools,
         freeSlots: countFreeSlots(bot),
@@ -96,7 +103,8 @@ export function snapshotNeeds(agent, cfg) {
         farm,
         bedKnown,
         homeSet,
-        darkSpots
+        darkSpots,
+        patrolReady
     };
 }
 
@@ -193,6 +201,18 @@ export class AutonomyLoop {
             try {
                 const runner = async () => {
                     result = await this._executors[actionable.kind](this.agent, actionable, cfg.needs) ?? 'done';
+                    // Humanlike touch: come home after wandering errands.
+                    if (RETURN_HOME_KINDS.has(actionable.kind) && cfg.needs.return_home_after_errand !== false) {
+                        try {
+                            const bot = this.agent?.bot;
+                            const home = getHome(this.agent);
+                            if (home && bot && !bot.interrupt_code) {
+                                const skills = await import('../library/skills.js');
+                                await skills.goToPosition(bot, home.x, home.y, home.z, 4);
+                                result += ' [returned home]';
+                            }
+                        } catch { /* returning home is best-effort */ }
+                    }
                 };
                 if (this.agent.actions?.runAction) {
                     const code = await this.agent.actions.runAction(

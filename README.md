@@ -525,6 +525,12 @@ dropped and normal pathfinding runs. Replay never blocks: any hiccup falls
 back to the regular two-probe navigation. TTL (default 15 min), entry cap
 (default 64) and the master switch live under `settings.navigation.route_cache`.
 
+The cache also keeps a **failure ledger**: when a trip fails (pathfinder gives
+up, or a replayed route no longer verifies), the route is remembered as
+*known failed* and skipped on future replays until the TTL passes. One
+successful trip over the same route forgives it. The ledger persists with the
+rest of the cache, so the bot stops burning time on routes that do not work.
+
 ```text
 !routeCache        # how many routes are remembered, TTL, file location
 !routeCache clear  # drop the cache
@@ -578,8 +584,10 @@ the "larger autonomous behavior" stage of the progression. It complements
 
 * **Needs scoring** — while idle, the loop builds a state snapshot and scores
   needs by urgency: broken/nearly-dead tools (replace), nearly-full inventory
-  (advisory until an unload executor exists), and frontier exploration after
-  long idle. Night dampens exploration urgency.
+  (unload to storage), low torches/food (restock), ripe crops (farm), bedtime
+  (rest), dark spots around home (maintain_base), a configured patrol circuit
+  (patrol, daytime only), and frontier exploration after long idle. Risky
+  needs are held while hostiles are close; night dampens wandering.
 * **Guardrails** — runs only when truly idle (no action, no conversation, no
   self-prompting), personality-paced cooldown between runs, a hard action
   timeout, and a bounded history. Executors catch their own errors; the loop
@@ -783,9 +791,19 @@ only when it is safe and sensible:
   home (`settings.autonomy.needs.maintain_radius`) for spots dark enough to
   spawn mobs and places torches there, but only when it actually carries
   torches. Keeps the base lit without being asked.
+* **Patrol (`patrol`)** — with two or more named stops configured in
+  `settings.autonomy.needs.patrol_pois` (mental-map POI names, or `"home"`),
+  an idle bot walks the circuit by day instead of frontier-exploring: each
+  leg is risk-checked, the loop closes back on the first stop, and anything
+  that interrupts an action stops the patrol cleanly. `!patrol` runs a
+  circuit on demand.
+* **Coming home** — after wandering errands (explore, farm, unload, patrol)
+  the loop walks the bot back to its home base, best-effort. Disable with
+  `settings.autonomy.needs.return_home_after_errand: false`.
 
 ```text
-!sleep                      # sleep in the nearest bed now
+!sleep                                # sleep in the nearest bed now
+!patrol home north-tower storage-shed # walk a named circuit now
 ```
 
 # Spatial Recall
@@ -793,8 +811,15 @@ only when it is safe and sensible:
 `src/agent/memory/recall.js` wires retrieval into the bot's spatial memory:
 search everything it knows about places — mental map POIs, saved memory-bank
 places, named storage spots — with a free-text query. Scoring is local and
-deterministic (no embedding service): exact name > name substring > type >
-notes, ties broken by distance from the bot.
+deterministic: exact name > name substring > type > notes, ties broken by
+distance from the bot.
+
+Recall also accepts an **optional embedding hook**: if the agent carries an
+`_embedding_provider` with `embed(text) -> number[]`, each candidate's
+keyword score is blended with its cosine similarity to the query (weight 2),
+so semantically close places float up even when the words differ. Without a
+provider — or if it errors — recall silently falls back to pure keywords, so
+it never depends on an external service.
 
 ```text
 !recall village blacksmith  # ranked matches across all spatial memory

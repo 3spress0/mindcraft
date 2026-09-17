@@ -168,7 +168,7 @@ describe('storage bench S5: fetch coverage honesty', () => {
 });
 
 describe('storage bench S6: spatial recall over a busy mental map', () => {
-    it('ranks exact, substring, and note matches deterministically', () => {
+    it('ranks exact, substring, and note matches deterministically', async () => {
         const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'recallbench-'));
         try {
             const map = new MentalMap({ botName: 'RecallBench', dir: tmp });
@@ -181,19 +181,19 @@ describe('storage bench S6: spatial recall over a busy mental map', () => {
                 memory_bank: { memory: { 'old-camp': [200, 60, -200] } }
             };
 
-            const villages = recall(agent, 'village');
+            const villages = await recall(agent, 'village');
             assert.equal(villages.length, 2);
             assert.ok(villages.every(h => h.name.includes('village')));
             // nearer village first on tie-break
             assert.equal(villages[0].name, 'village-hill');
 
-            const smith = recall(agent, 'blacksmith');
+            const smith = await recall(agent, 'blacksmith');
             assert.equal(smith[0].name, 'desert-village');
 
-            const camp = recall(agent, 'camp');
+            const camp = await recall(agent, 'camp');
             assert.equal(camp[0].kind, 'memory');
 
-            assert.equal(recall(agent, 'zzzz-nothing').length, 0);
+            assert.equal((await recall(agent, 'zzzz-nothing')).length, 0);
             assert.match(recallSummary('zzzz-nothing', []), /don't remember/);
             assert.deepEqual(tokenize('Desert VILLAGE!!'), ['desert', 'village']);
         } finally {

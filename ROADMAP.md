@@ -2,7 +2,7 @@
 
 Master roadmap for the fork. Checked items are implemented in this repository
 (references point at the main module); unchecked items are the open work queue.
-Status audited 2026-09-16 against branch `arena/01a0aa05-mindcraft`.
+Status audited 2026-09-17 against branch `arena/01a0aa05-mindcraft`.
 
 Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 
@@ -11,7 +11,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Persistent world model — `src/agent/world_model/` + `store.js`
 * [x] Short-term memory — `src/agent/history.js` conversation buffer
 * [x] Long-term world memory — `memory_bank.js`, learned skills, persisted world model
-* [~] Semantic memory — local deterministic spatial retrieval wired (`memory/recall.js`, `!recall`); embedding-based retrieval not wired
+* [x] Semantic memory — keyword retrieval (`memory/recall.js`, `!recall`) plus optional embedding provider hook: an agent-level `_embedding_provider.embed(text)` blends cosine similarity into recall scores, keyword-only fallback
 * [x] Entity memory — world-model `entity` facts via observation collector
 * [x] Location/waypoint memory — `memory_bank.js` + world-model `location` facts
 * [x] Mental map (POI notes) — `memory/mental_map.js`: durable village/house/base/farm/storage notes the LLM authors with `!notePlace` and reads via `!memory`/`!pois`/`!goToPoi`; deaths auto-noted
@@ -80,7 +80,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [ ] Food selection based on context
 * [x] Tool switching based on context — bestHarvestTool/equip
 * [ ] Bring appropriate tools before leaving
-* [ ] Return home after completing errands
+* [x] Return home after completing errands — autonomy runner walks back to home after explore/farm/unload/patrol (`task_loop.js`, `return_home_after_errand`)
 * [ ] Humanlike exploration patterns
 * [x] Avoid constantly looking at entities through walls — idle staring now gated by `lineOfSight`
 * [x] Only use information the bot could legitimately observe — legit radar posture
@@ -154,12 +154,12 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Surface navigation — `goToSurface`
 * [~] Nether navigation — dimension-aware + nether benchmark scenario; no dedicated logic
 * [ ] Portal routing
-* [ ] Return-to-base behavior
+* [x] Return-to-base behavior — same home-return hook in the task loop; base = mental-map home, best-effort and interrupt-safe
 * [~] Emergency escape behavior — `moveAway`/`avoidEnemies`; no dedicated escape flow
 * [x] Follow behavior — `followPlayer` + `GoalFollow`
 * [ ] Escort behavior
 * [x] Flee behavior — cowardice + avoidEnemies
-* [ ] Patrol behavior
+* [x] Patrol behavior — `autonomy/patrol.js`: named circuits of mental-map POIs (`patrol_pois`), risk-checked per leg, `!patrol` command, autonomous patrol need by day
 * [ ] Wander behavior
 * [x] Search behavior — `!searchForBlock` / `!searchForEntity`
 
@@ -180,8 +180,8 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [~] Known dangerous locations — threat facts carry positions; no durable danger map
 * [ ] Known safe locations
 * [x] Known useful locations — location/structure/resource facts
-* [ ] Known failed routes
-* [ ] Known successful routes
+* [x] Known failed routes — `navigation/route_cache.js` failure ledger: failed routes skipped on replay until TTL, forgiven on success, persisted
+* [x] Known successful routes — successful pathfinds cached and replayed (`navigation/route_cache.js`, TTL-bounded, verified before reuse)
 * [x] World-model queries — `nearest`/`lastSeen`/`queryNearest`, `!where`/`!world`
 * [x] World-model cleanup — expiry pruning + confidence floor
 * [x] Save/load world model — `world_model/store.js`
@@ -655,7 +655,11 @@ get tidied, stack-consolidated, and fully slot-sorted
 respawn points and bed anchors are tracked (`!findBed`, metrics respawns),
 spatial memory is searchable (`memory/recall.js`, `!recall`), the bot sleeps
 in its bed at night when it is safe to do so (autonomous `rest` need) and
-keeps its home lit (`maintain_base` need), all guarded by the storage and
-survival benchmarks. Remaining frontier: embedding-based semantic retrieval,
-LLM-in-the-loop scenario benchmarks, autonomous farming at base scale, and
-multi-base/outpost management.
+keeps its home lit (`maintain_base` need), patrols named circuits between
+known places (`autonomy/patrol.js`, `!patrol`), returns home after wandering
+errands, and remembers which routes failed so it does not retry them
+(`navigation/route_cache.js` failure ledger) — all guarded by the storage and
+survival benchmarks. Spatial recall also accepts an optional embedding
+provider (`agent._embedding_provider`) to blend vector similarity into
+keyword search. Remaining frontier: LLM-in-the-loop scenario benchmarks,
+autonomous farming at base scale, and multi-base/outpost management.

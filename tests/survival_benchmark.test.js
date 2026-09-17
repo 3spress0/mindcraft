@@ -13,6 +13,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Vec3 } from 'vec3';
 import { AutonomyLoop } from '../src/agent/autonomy/task_loop.js';
+import settings from '../settings.js';
 
 /** Stub executors record which need the loop chose to run. */
 const CHOICES = {};
@@ -24,6 +25,7 @@ const stubExecutors = {
     farm: async (a, need) => { CHOICES.last = `farm:${need.detail}`; return CHOICES.last; },
     rest: async () => { CHOICES.last = 'rest'; return CHOICES.last; },
     maintain_base: async (a, need) => { CHOICES.last = 'maintain_base'; return CHOICES.last; },
+    patrol: async (a, need, needsCfg) => { CHOICES.last = `patrol:${(needsCfg?.patrol_pois ?? []).length}pois`; return CHOICES.last; },
     explore: async () => { CHOICES.last = 'explore'; return CHOICES.last; }
 };
 
@@ -246,5 +248,34 @@ describe('survival benchmark: invariants over many ticks', () => {
         const agent = makeAgent({ time: 6000, idleMs: 120000, slots });
         const { choice } = await tickOnce(agent);
         assert.equal(choice, 'tool_replace:iron_pickaxe');
+    });
+
+    it('configured patrol circuit replaces idle exploration by day', async () => {
+        const saved = settings.autonomy.needs.patrol_pois;
+        try {
+            settings.autonomy.needs.patrol_pois = ['north-tower', 'south-gate'];
+            const agent = makeAgent({ time: 6000, idleMs: 120000 });
+            const { choice } = await tickOnce(agent);
+            assert.equal(choice, 'patrol:2pois');
+        } finally {
+            settings.autonomy.needs.patrol_pois = saved;
+        }
+    });
+
+    it('patrol is held at night like exploration (risky need)', async () => {
+        const saved = settings.autonomy.needs.patrol_pois;
+        try {
+            settings.autonomy.needs.patrol_pois = ['north-tower', 'south-gate'];
+            const agent = makeAgent({
+                time: 18000, idleMs: 120000,
+                hostiles: [{ name: 'zombie', x: 6 }, { name: 'skeleton', x: 0, z: 8 }],
+                slots: [item('coal', 9, 4), item('stick', 10, 8)]
+            });
+            const { loop } = await tickOnce(agent);
+            assert.equal(loop.lastRisk.level, 'high');
+            assert.ok(agent.ran.every(l => !l.includes('patrol')), 'patrol must not run under high risk');
+        } finally {
+            settings.autonomy.needs.patrol_pois = saved;
+        }
     });
 });

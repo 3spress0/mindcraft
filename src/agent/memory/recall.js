@@ -20,6 +20,41 @@ export function tokenize(text) {
         .filter(t => t.length >= 2);
 }
 
+/** Cosine similarity of two equal-length vectors (0 when degenerate). */
+export function cosineSimilarity(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || a.length !== b.length) return 0;
+    let dot = 0;
+    let na = 0;
+    let nb = 0;
+    for (let i = 0; i < a.length; i++) {
+        dot += a[i] * b[i];
+        na += a[i] * a[i];
+        nb += b[i] * b[i];
+    }
+    if (na <= 0 || nb <= 0) return 0;
+    return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+/**
+ * Optional embedding hook (GO list: semantic memory retrieval). If the agent
+ * carries an `_embedding_provider` with `embed(text) -> number[]`, recall
+ * blends vector similarity into the keyword score. Providers are injected —
+ * any embedding model can back it; without one, keyword scoring stands alone.
+ */
+async function embedDocs(agent, query, docs) {
+    const provider = agent?._embedding_provider;
+    if (!provider || typeof provider.embed !== 'function') return null;
+    try {
+        const q = await provider.embed(query);
+        const out = [];
+        for (const doc of docs) {
+            const v = await provider.embed(doc.text);
+            out.push(cosineSimilarity(q, v));
+        }
+        return out;
+    } catch { return null; }
+}
+
 /** Build the searchable corpus of everything spatial the bot knows. */
 export function buildCorpus(agent) {
     const docs = [];
@@ -89,18 +124,24 @@ export function scoreDoc(doc, tokens) {
 
 /**
  * Recall matching places, best first.
- * @returns {Array<{kind, name, x, y, z, score, distance, text}>}
+ * @returns {Promise<Array<{kind, name, x, y, z, score, distance, text}>>}
  */
-export function recall(agent, query, { limit = 8, maxDistance = null } = {}) {
+export async function recall(agent, query, { limit = 8, maxDistance = null } = {}) {
     const tokens = tokenize(query);
     if (!tokens.length) return [];
+    const corpus = buildCorpus(agent);
+    const vectorScores = await embedDocs(agent, String(query ?? '').toLowerCase(), corpus);
     const hits = [];
-    for (const doc of buildCorpus(agent)) {
-        const score = scoreDoc(doc, tokens);
-        if (score <= 0) continue;
-        if (maxDistance != null && doc.distance != null && doc.distance > maxDistance) continue;
-        hits.push({ ...doc, score });
-    }
+    corpus.forEach((doc, i) => {
+        let score = scoreDoc(doc, tokens);
+        if (vectorScores) {
+            // blend: vector similarity boosts, keyword floor keeps sanity
+            score = score + 2 * Math.max(0, vectorScores[i] ?? 0);
+        }
+        if (score <= 0) return;
+        if (maxDistance != null && doc.distance != null && doc.distance > maxDistance) return;
+        hits.push({ ...doc, score: Math.round(score * 100) / 100 });
+    });
     hits.sort((a, b) =>
         b.score - a.score ||
         (a.distance ?? Infinity) - (b.distance ?? Infinity) ||

@@ -11,6 +11,7 @@ import { autonomyDefaults } from './needs.js';
 import { executeInventoryUnload } from './unload.js';
 import { executeFarming } from './farming.js';
 import { executeBaseMaintenance } from './base.js';
+import { executePatrolNeed } from './patrol.js';
 
 /** Replace the worn/broken tool named in the need. */
 export async function executeToolReplacement(agent, need, cfg = {}) {
@@ -74,5 +75,6 @@ export const EXECUTORS = {
     restock_food: executeRestock,
     farm: executeFarming,
     rest: executeRest,
-    maintain_base: executeBaseMaintenance
+    maintain_base: executeBaseMaintenance,
+    patrol: executePatrolNeed
 };

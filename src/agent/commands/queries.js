@@ -371,8 +371,8 @@ export const queryList = [
         params: {
             'query': { type: 'string', description: 'What to remember, e.g. "village blacksmith", "iron storage", "base".' },
         },
-        perform: function (agent, query) {
-            const hits = recall(agent, query);
+        perform: async function (agent, query) {
+            const hits = await recall(agent, query);
             return pad(recallSummary(query, hits));
         }
     },

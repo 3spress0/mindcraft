@@ -5,7 +5,7 @@
  * build the snapshot, which keeps this fully testable.
  */
 
-export const NEED_KINDS = ['tool_replace', 'inventory_full', 'restock_food', 'restock_torches', 'farm', 'rest', 'maintain_base', 'explore'];
+export const NEED_KINDS = ['tool_replace', 'inventory_full', 'restock_food', 'restock_torches', 'farm', 'rest', 'maintain_base', 'patrol', 'explore'];
 
 export function autonomyDefaults() {
     return {
@@ -135,15 +135,27 @@ export function evaluateNeeds(ctx = {}, cfg = {}) {
     if (c.explore_when_idle) {
         const idleMs = ctx.idleForMs ?? 0;
         if (idleMs >= c.explore_idle_s * 1000 && !ctx.hasPendingResume) {
-            // nights are for staying put unless curiosity demands otherwise
-            const urgency = ctx.isNight ? 0.15 : 0.3;
-            needs.push({
-                kind: 'explore',
-                urgency,
-                detail: `idle ${Math.round(idleMs / 1000)}s`,
-                advisory: false,
-                info: `Idle ${Math.round(idleMs / 1000)}s; frontier exploration.`
-            });
+            // a configured patrol beats aimless exploration by day; nights
+            // are for staying put either way
+            if (ctx.patrolReady && !ctx.isNight) {
+                needs.push({
+                    kind: 'patrol',
+                    urgency: 0.32,
+                    detail: `idle ${Math.round(idleMs / 1000)}s`,
+                    advisory: false,
+                    info: 'Idle long enough — walking the configured patrol round.'
+                });
+            } else {
+                // nights are for staying put unless curiosity demands otherwise
+                const urgency = ctx.isNight ? 0.15 : 0.3;
+                needs.push({
+                    kind: 'explore',
+                    urgency,
+                    detail: `idle ${Math.round(idleMs / 1000)}s`,
+                    advisory: false,
+                    info: `Idle ${Math.round(idleMs / 1000)}s; frontier exploration.`
+                });
+            }
         }
     }
 
