@@ -21,6 +21,8 @@ import { listTools } from '../library/durability.js';
 import { isEdible } from './unload.js';
 import { farmSnapshot } from './farming.js';
 import { assessLocalRisk, filterNeedsByRisk, riskLine } from './risk.js';
+import { scanDarkSpots } from './base.js';
+import { getHome } from '../navigation/home.js';
 import * as world from '../library/world.js';
 import convoManager from '../conversation.js';
 
@@ -37,7 +39,8 @@ export function getAutonomyConfig() {
         max_unload_types: block.needs?.max_unload_types ?? 8,
         farm_radius: block.needs?.farm_radius ?? 16,
         max_harvest: block.needs?.max_harvest ?? 16,
-        max_plants: block.needs?.max_plants ?? 24
+        max_plants: block.needs?.max_plants ?? 24,
+        maintain_radius: block.needs?.maintain_radius ?? 8
     };
     const [lo, hi] = Array.isArray(block.cooldown_s) && block.cooldown_s.length === 2
         ? block.cooldown_s : [20, 60];
@@ -69,6 +72,19 @@ export function snapshotNeeds(agent, cfg) {
     if (foodCount < cfg.needs.min_food) {
         try { farm = farmSnapshot(bot, { radius: cfg.needs.farm_radius }); } catch { farm = null; }
     }
+    // Bedtime + base-maintenance context (cheap checks, night-gated scan).
+    let bedKnown = false;
+    try { bedKnown = (agent?.mental_map?.list?.({ type: 'bed' }) ?? []).length > 0 || !!bot?._bed_known; }
+    catch { bedKnown = false; }
+    let homeSet = false;
+    try { homeSet = !!getHome(agent); } catch { homeSet = false; }
+    let darkSpots = 0;
+    if (homeSet) {
+        try {
+            const home = getHome(agent);
+            darkSpots = scanDarkSpots(bot, { center: home, radius: cfg.needs.maintain_radius ?? 8 }).length;
+        } catch { darkSpots = 0; }
+    }
     return {
         tools,
         freeSlots: countFreeSlots(bot),
@@ -77,7 +93,10 @@ export function snapshotNeeds(agent, cfg) {
         hasPendingResume: !!agent?.behavior_state?.hasPendingResume?.(),
         inventoryCounts,
         foodCount,
-        farm
+        farm,
+        bedKnown,
+        homeSet,
+        darkSpots
     };
 }
 

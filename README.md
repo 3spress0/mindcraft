@@ -736,20 +736,27 @@ withdraws until satisfied — reporting exactly which chests it visited.
 !fetchItem bread            # get every stored bread (-1 = all)
 ```
 
-# Chest Tidying & Stack Management
+# Chest Tidying, Sorting & Stack Management
 
 Chests the bot uses a lot accumulate scattered partial stacks of the same
-item. `src/agent/storage/tidying.js` detects them and consolidates exactly
-the way a player would — withdraw the item entirely and re-deposit it, which
-lets vanilla merge the stacks. No slot-packet tricks; ordinary container
-windows only.
+item, and eventually end up in arbitrary order. Both problems are fixed the
+way a player would do it — ordinary container windows, no slot-packet tricks:
+
+* **Tidy** — `!organizeChest` detects scattered partial stacks and
+  consolidates them: withdraw the item entirely and re-deposit it, letting
+  vanilla merge the stacks.
+* **Sort** — `!sortChest` rearranges the whole chest into a deterministic
+  order: category groups (tools / armor / food / resources / blocks / misc),
+  then item name, then stack size, empties last — applied with window-click
+  swaps.
 
 ```text
-!organizeChest              # tidy the nearest chest within 16 blocks
+!organizeChest              # consolidate scattered stacks in the nearest chest
+!sortChest                  # full category/name/count sort of the nearest chest
 ```
 
-The module also produces category manifests (tools / armor / food / resources
-/ blocks) so the LLM can reason about what a chest is for.
+The tidying module also produces category manifests so the LLM can reason
+about what a chest is for.
 
 # Respawn & Bed Awareness
 
@@ -761,6 +768,24 @@ its respawn anchor — automatically on login/respawn, or on demand:
 ```text
 !findBed                    # scan for a bed and note it as respawn anchor
 !metrics                    # respawns are listed alongside deaths
+```
+
+# Bedtime & Home Maintenance
+
+The autonomy loop keeps the bot's home life in order with two needs that run
+only when it is safe and sensible:
+
+* **Bedtime (`rest`)** — at night, if the bot knows a bed (mental map or a
+  bed it can reach), it sleeps until morning instead of wandering. Sleep is a
+  *risky* need: the risk gate holds it whenever hostiles are close, so the
+  bot never dozes off in danger. `!sleep` triggers it on demand.
+* **Home lighting (`maintain_base`)** — the bot scans the area around its
+  home (`settings.autonomy.needs.maintain_radius`) for spots dark enough to
+  spawn mobs and places torches there, but only when it actually carries
+  torches. Keeps the base lit without being asked.
+
+```text
+!sleep                      # sleep in the nearest bed now
 ```
 
 # Spatial Recall

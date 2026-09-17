@@ -291,7 +291,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Item-location database — index maps items → container positions
 * [x] Deposit logic — `!putInChest`
 * [x] Withdraw logic — `!takeFromChest`
-* [~] Sorting — category manifests + consolidation via `!organizeChest`; full slot-order sorting pending
+* [x] Sorting — `storage/sorting.js` full slot-order sort (category/name/count) via window clicks, `!sortChest`; `!organizeChest` consolidates stacks
 * [x] Stack management — `storage/tidying.js` detects scattered partial stacks and consolidates them (withdraw + re-deposit)
 * [x] Storage optimization — unload balances deposits across multiple chests by estimated free capacity (`storage/balancing.js`)
 * [x] Overflow handling — `inventory_full` need auto-unloads with multi-chest balancing, reservations, and spot routing
@@ -307,7 +307,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Equipment management — armor-manager
 * [x] Tool durability management — durability-aware swaps in `skills.breakBlockAt`/`baritone.mineBlocks` (never dig with a nearly-dead tool)
 * [x] Bed detection — goToBed
-* [~] Sleep planning — sleeps when told/nighttime via skills; no proactive plan
+* [x] Sleep planning — autonomous `rest` need at night when a bed is known, risk-gated (never sleeps with hostiles close); `!sleep`
 * [x] Respawn-point awareness — respawn events tracked in metrics; nearest bed auto-noted as respawn anchor (`!findBed`, POI types `bed`/`spawn`)
 * [x] Fire/lava emergency handling — self_preservation bucket logic
 * [ ] Fall-damage avoidance
@@ -563,7 +563,7 @@ Legend: `[x]` implemented · `[~]` partial / groundwork present · `[ ]` open
 * [x] Self-maintained resource reserves — autonomy loop crafts torches (`min_torches`) and bread (`min_food`) when materials allow
 * [x] Self-maintained equipment — autonomy loop auto-replaces broken/nearly-dead tools
 * [x] Self-maintained food supply — crafts bread from wheat and farms crops to replenish it
-* [~] Self-maintained base — construction_damage repair; not proactive
+* [x] Self-maintained base — proactive `maintain_base` need lights dark spots around home (`autonomy/base.js`); construction_damage repair also exists
 
 ### Final architecture target
 
@@ -650,9 +650,12 @@ are tracked persistently (`library/metrics.js`, `!metrics`), the bot keeps a
 durable mental map of POIs (`memory/mental_map.js`, `!notePlace`/`!pois`),
 `!fetchItem` retrieves stored items by routing to their indexed containers,
 and a deterministic navigation benchmark guards the movement layer, chests
-get tidied and stack-consolidated (`storage/tidying.js`, `!organizeChest`),
+get tidied, stack-consolidated, and fully slot-sorted
+(`storage/tidying.js` + `storage/sorting.js`, `!organizeChest`/`!sortChest`),
 respawn points and bed anchors are tracked (`!findBed`, metrics respawns),
-and spatial memory is searchable (`memory/recall.js`, `!recall`) with a
-storage benchmark guarding the whole layer. Remaining frontier: full
-slot-order chest sorting, embedding-based semantic retrieval, LLM-in-the-loop
-scenario benchmarks, and autonomous base maintenance.
+spatial memory is searchable (`memory/recall.js`, `!recall`), the bot sleeps
+in its bed at night when it is safe to do so (autonomous `rest` need) and
+keeps its home lit (`maintain_base` need), all guarded by the storage and
+survival benchmarks. Remaining frontier: embedding-based semantic retrieval,
+LLM-in-the-loop scenario benchmarks, autonomous farming at base scale, and
+multi-base/outpost management.

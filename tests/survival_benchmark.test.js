@@ -22,6 +22,8 @@ const stubExecutors = {
     restock_torches: async () => { CHOICES.last = 'restock_torches'; return CHOICES.last; },
     restock_food: async () => { CHOICES.last = 'restock_food'; return CHOICES.last; },
     farm: async (a, need) => { CHOICES.last = `farm:${need.detail}`; return CHOICES.last; },
+    rest: async () => { CHOICES.last = 'rest'; return CHOICES.last; },
+    maintain_base: async (a, need) => { CHOICES.last = 'maintain_base'; return CHOICES.last; },
     explore: async () => { CHOICES.last = 'explore'; return CHOICES.last; }
 };
 
@@ -52,7 +54,11 @@ function makeAgent(spec = {}) {
         inventory: { slots },
         // farm scan + nearest-chest probes
         findBlocks: () => cropBlocks.map(b => b.position),
-        blockAt: (pos) => cropBlocks.find(b => b.position.x === pos.x && b.position.z === pos.z) ?? { name: 'air', position: pos }
+        blockAt: (pos) => cropBlocks.find(b => b.position.x === pos.x && b.position.z === pos.z) ?? { name: 'air', position: pos },
+        // base-lighting probe: dark patch near origin when the spec says so
+        lightAt: spec.dark
+            ? (pos) => (Math.abs(pos.x) <= 1 && Math.abs(pos.z) <= 1 ? 1 : 14)
+            : () => 15
     };
     if (spec.posture) bot._risk_profile = spec.posture;
     const ran = [];
@@ -61,6 +67,9 @@ function makeAgent(spec = {}) {
         isIdle: () => true,
         isHandlingMessage: () => false,
         idleForMs: () => spec.idleMs ?? 120000,
+        // bedtime + base context
+        mental_map: spec.bed ? { list: ({ type } = {}) => (type === 'bed' ? [{ name: 'bed' }] : []) } : undefined,
+        memory_bank: spec.home ? { recallPlace: (k) => (k === 'home' ? [0, 64, 0] : null) } : undefined,
         actions: { runAction: async (label, fn) => { ran.push(label); await fn(); return { interrupted: false }; } }
     };
 }
@@ -161,6 +170,45 @@ describe('survival benchmark: a simulated week of decisions', () => {
         const b = await tickOnce(bold);
         const c = await tickOnce(cautious);
         assert.ok(c.loop.lastRisk.score >= b.loop.lastRisk.score);
+    });
+
+    it('night with a known bed — sleeps instead of exploring', async () => {
+        const agent = makeAgent({ time: 18000, idleMs: 120000, bed: true });
+        const { choice } = await tickOnce(agent);
+        assert.equal(choice, 'rest');
+        assert.deepEqual(agent.ran, ['autonomy:rest']);
+    });
+
+    it('night with bed and dark home — rest outranks maintenance', async () => {
+        const agent = makeAgent({
+            time: 18000, idleMs: 120000, bed: true, home: true, dark: true,
+            slots: [item('torch', 20, 5)]
+        });
+        const { choice } = await tickOnce(agent);
+        assert.equal(choice, 'rest'); // 0.5 beats maintain_base 0.45
+    });
+
+    it('day with a dark home — lights the base', async () => {
+        const agent = makeAgent({
+            time: 6000, idleMs: 120000, home: true, dark: true,
+            slots: [item('torch', 20, 5)]
+        });
+        const { choice } = await tickOnce(agent);
+        assert.equal(choice, 'maintain_base');
+    });
+
+    it('dangerous night — sleep is held like any risky need', async () => {
+        const agent = makeAgent({
+            time: 18000, idleMs: 120000, bed: true,
+            hostiles: [{ name: 'zombie', x: 6 }, { name: 'skeleton', x: 0, z: 8 }],
+            slots: [item('bread', 9, 5)]
+        });
+        const { choice, loop } = await tickOnce(agent);
+        assert.equal(loop.lastRisk.level, 'high');
+        assert.equal(choice, null);
+        const held = loop.history.find(h => h.result?.startsWith('held'));
+        assert.ok(held);
+        assert.ok(['rest', 'explore'].includes(held.kind), `held should be rest/explore, got ${held.kind}`);
     });
 });
 

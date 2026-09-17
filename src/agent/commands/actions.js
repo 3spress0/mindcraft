@@ -15,6 +15,7 @@ import { getSpotRegistry } from '../storage/placement.js';
 import { getMentalMap, POI_TYPES, noteBedIfNear } from '../memory/mental_map.js';
 import { planFetch, executeFetch } from '../storage/fetch.js';
 import { executeTidy } from '../storage/tidying.js';
+import { executeSort } from '../storage/sorting.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -842,6 +843,31 @@ export const actionsList = [
             const poi = noteBedIfNear(agent, { radius: 32 });
             if (!poi) return 'No bed found within 32 blocks.';
             return `Found ${poi.notes ?? 'a bed'} at (${poi.x}, ${poi.y}, ${poi.z}) — noted as respawn anchor.`;
+        }
+    },
+    {
+        name: '!sleep',
+        description: 'Sleep in the nearest bed (works at night or during thunderstorms).',
+        perform: async function (agent) {
+            const code = await agent.actions.runAction('action:sleep', async () => {
+                const ok = await skills.goToBed(agent.bot);
+                agent._sleep_result = ok;
+            }, {});
+            if (code?.interrupted) return 'Woken up early.';
+            return agent._sleep_result ? 'Slept until morning.' : 'Could not find or reach a bed to sleep in.';
+        }
+    },
+    {
+        name: '!sortChest',
+        description: 'Fully sort the nearest chest (within 16 blocks) by category (tools/armor/food/resources/blocks), then item name, then stack size — using ordinary window clicks.',
+        perform: async function (agent) {
+            const chest = world.getNearestBlock(agent.bot, 'chest', 16);
+            if (!chest) return 'No chest within 16 blocks — stand next to the chest to sort.';
+            const code = await agent.actions.runAction('action:sortChest', async () => {
+                agent._sort_result = await executeSort(agent.bot, chest);
+            }, {});
+            if (code?.interrupted) return 'Interrupted while sorting.';
+            return agent._sort_result ?? 'Done sorting.';
         }
     },
     {

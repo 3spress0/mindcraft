@@ -10,6 +10,7 @@ import { explore } from '../navigation/exploration.js';
 import { autonomyDefaults } from './needs.js';
 import { executeInventoryUnload } from './unload.js';
 import { executeFarming } from './farming.js';
+import { executeBaseMaintenance } from './base.js';
 
 /** Replace the worn/broken tool named in the need. */
 export async function executeToolReplacement(agent, need, cfg = {}) {
@@ -52,11 +53,26 @@ export async function executeRestock(agent, need, cfg = {}) {
     }
 }
 
+/** Sleep until morning in the nearest bed (only sensible at night). */
+export async function executeRest(agent, need, cfg = {}) {
+    const bot = agent?.bot;
+    if (!bot) return 'rest: no bot';
+    try {
+        const skills = await import('../library/skills.js');
+        const ok = await skills.goToBed(bot);
+        return ok ? 'rest: slept until morning' : 'rest: no bed reachable right now';
+    } catch (e) {
+        return `rest failed: ${e.message}`;
+    }
+}
+
 export const EXECUTORS = {
     tool_replace: executeToolReplacement,
     explore: executeExploration,
     inventory_full: executeInventoryUnload,
     restock_torches: executeRestock,
     restock_food: executeRestock,
-    farm: executeFarming
+    farm: executeFarming,
+    rest: executeRest,
+    maintain_base: executeBaseMaintenance
 };

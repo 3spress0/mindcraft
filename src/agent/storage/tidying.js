@@ -16,6 +16,7 @@ const TOOL_WORDS = ['pickaxe', 'axe', 'shovel', 'hoe', 'sword'];
 const ARMOR_WORDS = ['helmet', 'chestplate', 'leggings', 'boots', 'elytra', 'shield'];
 const FOOD_WORDS = ['bread', 'apple', 'cooked_', 'golden_carrot', 'melon_slice', 'carrot', 'potato', 'beetroot', 'sweet_berries', 'chorus_fruit', 'dried_kelp', 'cookie', 'pumpkin_pie', 'mushroom_stew', 'rabbit_stew', 'beetroot_soup', 'suspicious_stew', 'honey_bottle', 'cake', 'rotten_flesh'];
 const RESOURCE_WORDS = ['ingot', 'nugget', 'ore', 'coal', 'charcoal', 'diamond', 'emerald', 'lapis', 'redstone', 'quartz', 'iron', 'gold', 'copper'];
+const BLOCK_WORDS = ['planks', 'log', 'wood', 'stone', 'dirt', 'cobblestone', 'granite', 'diorite', 'andesite', 'sand', 'gravel', 'brick', 'glass', 'obsidian', 'netherrack', 'blackstone', 'deepslate', 'tuff', 'clay', 'terracotta', 'concrete', 'wool', 'leaves', 'slab', 'stairs', 'fence'];
 
 /** Classify an item into a coarse category for manifests/grouping. */
 export function categorize(itemName) {
@@ -25,7 +26,8 @@ export function categorize(itemName) {
     if (ARMOR_WORDS.some(w => n.includes(w))) return 'armor';
     if (FOOD_WORDS.some(w => n.includes(w))) return 'food';
     if (RESOURCE_WORDS.some(w => n.includes(w))) return 'resources';
-    return 'blocks';
+    if (BLOCK_WORDS.some(w => n.includes(w))) return 'blocks';
+    return 'misc';
 }
 
 /**

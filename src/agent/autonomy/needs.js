@@ -5,7 +5,7 @@
  * build the snapshot, which keeps this fully testable.
  */
 
-export const NEED_KINDS = ['tool_replace', 'inventory_full', 'restock_food', 'restock_torches', 'farm', 'explore'];
+export const NEED_KINDS = ['tool_replace', 'inventory_full', 'restock_food', 'restock_torches', 'farm', 'rest', 'maintain_base', 'explore'];
 
 export function autonomyDefaults() {
     return {
@@ -107,7 +107,31 @@ export function evaluateNeeds(ctx = {}, cfg = {}) {
         }
     }
 
-    // 4. Idle long enough with nothing pending -> go see the world.
+    // 4. Bedtime: at night with a known bed, rest instead of wandering.
+    //    Dangerous nights are handled by the risk gate (rest is a risky need).
+    if (ctx.isNight && ctx.bedKnown && !ctx.hasPendingResume) {
+        needs.push({
+            kind: 'rest',
+            urgency: 0.5,
+            detail: 'bed known',
+            advisory: false,
+            info: 'It is night and a bed is known — sleeping until morning.'
+        });
+    }
+
+    // 4b. Proactive base maintenance: light the dark spots around home.
+    //     Beats idle exploration even by day — a lit base before wandering.
+    if (ctx.homeSet && ctx.darkSpots > 0 && (counts['torch'] ?? 0) > 0) {
+        needs.push({
+            kind: 'maintain_base',
+            urgency: ctx.isNight ? 0.45 : 0.35,
+            detail: `${ctx.darkSpots} dark spot(s)`,
+            advisory: false,
+            info: `${ctx.darkSpots} dark spot(s) around home; torches available.`
+        });
+    }
+
+    // 5. Idle long enough with nothing pending -> go see the world.
     if (c.explore_when_idle) {
         const idleMs = ctx.idleForMs ?? 0;
         if (idleMs >= c.explore_idle_s * 1000 && !ctx.hasPendingResume) {
