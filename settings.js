@@ -3,6 +3,11 @@ const settings = {
     "host": "127.0.0.1", // or "localhost", "your.ip.address.here"
     "port": 55916, // set to -1 to automatically scan for open ports
     "auth": "offline", // or "microsoft"
+    // Optional external ViaProxy endpoint. This is never a silent fallback:
+    // set connection_mode to "viaproxy" to use it, or leave native mode on.
+    "protocolMode": "native", // "native" or "viaproxy"
+    "viaProxy": { "enabled": false, "host": "127.0.0.1", "port": 25568 },
+    // Legacy aliases remain accepted: connection_mode and via_proxy.
 
     // the mindserver manages all agents and hosts the UI
     "mindserver_port": 8080,

@@ -10,12 +10,22 @@ After first start it will create config file `services/viaproxy/viaproxy.yml`.
 
 Edit this file, and change your desired target `target-address`, 
 
-then point your `settings.js` `host` and `port` to viaproxy endpoint:
+Configure Mindcraft explicitly for ViaProxy in `settings.js` (there is no silent fallback):
 
 ```javascript
-    "host": "host.docker.internal",
-    "port": 25568,
+    "connection_mode": "viaproxy",
+    "via_proxy": {
+      "enabled": true,
+      "host": "127.0.0.1", // or a remote ViaProxy host
+      "port": 25568
+    },
 ```
+
+For Mindcraft running in Docker, use `host.docker.internal` instead of
+`127.0.0.1`. In ViaProxy mode Mineflayer connects to this endpoint; ViaProxy
+then connects to its configured `target-address`. If the endpoint is missing
+or unavailable, startup/connection fails visibly rather than falling back to
+native mode. Native 26.2 mode remains the default and does not use ViaProxy.
 
 This easily works with "offline" servers. 
 

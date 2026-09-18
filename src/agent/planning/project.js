@@ -79,6 +79,13 @@ export class PlanStep {
         this.instruction = String(data.instruction || data.title || '');
         this.expected = normalizeExpected(data.expected);
         this.expectedDelta = normalizeStepDelta(data.expectedDelta ?? data.expected_delta);
+        // Optional deterministic execution contract. Legacy plans omit these
+        // fields and continue through the existing ReAct executor.
+        this.skill = data.skill ? String(data.skill) : null;
+        this.skillArgs = data.skillArgs ?? data.skill_args ?? null;
+        this.interruptPolicy = data.interruptPolicy ?? data.interrupt_policy ?? null;
+        this.skillProgress = data.skillProgress ?? data.skill_progress ?? {};
+        this.recoveryAttempts = Number(data.recoveryAttempts ?? data.recovery_attempts ?? 0) || 0;
         this.phaseId = data.phaseId || DEFAULT_PHASE_ID;
         this.parentId = data.parentId || null;
         this.dependsOn = Array.isArray(data.dependsOn) ? [...data.dependsOn] :
@@ -107,6 +114,11 @@ export class PlanStep {
             instruction: this.instruction,
             expected: this.expected,
             expected_delta: this.expectedDelta ? deltaToJSON(this.expectedDelta) : null,
+            skill: this.skill,
+            skill_args: this.skillArgs,
+            interrupt_policy: this.interruptPolicy,
+            skill_progress: this.skillProgress,
+            recovery_attempts: this.recoveryAttempts,
             phaseId: this.phaseId,
             parentId: this.parentId,
             dependsOn: this.dependsOn,

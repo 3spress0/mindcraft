@@ -83,7 +83,10 @@ export const modes_list = [
             else if (Date.now() - bot.lastDamageTime < 3000 && (bot.health < 5 || bot.lastDamageTaken >= bot.health)) {
                 say(agent, 'I\'m dying!');
                 execute(this, agent, async () => {
-                    await skills.moveAway(bot, 20);
+                    // Escape from the nearest hostile using a real repulsive
+                    // goal. Inverting a GoalNear around the bot made the
+                    // pathfinder orbit and look like it was running in circles.
+                    await skills.avoidEnemies(bot, 20);
                 });
             }
             else if (agent.isIdle()) {

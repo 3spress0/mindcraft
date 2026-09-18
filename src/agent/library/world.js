@@ -76,7 +76,17 @@ export function getNearestFreeSpace(bot, size=1, distance=8) {
             for (let z = 0; z < size; z++) {
                 let top = bot.blockAt(empty_pos[i].offset(x, 0, z));
                 let bottom = bot.blockAt(empty_pos[i].offset(x, -1, z));
-                if (!top || !top.name == 'air' || !bottom || bottom.drops.length == 0 || !bottom.diggable) {
+                // The old `!top.name == 'air'` expression compares a
+                // boolean to a string and is always false. That allowed the
+                // builder to select occupied positions, then fail every
+                // placement. Require a real two-block-high empty footprint
+                // with a usable support block.
+                const head = bot.blockAt(empty.offset(x, 1, z));
+                const topEmpty = top && (top.name === 'air' || top.name === 'cave_air' || top.name === 'void_air');
+                const headEmpty = head && (head.name === 'air' || head.name === 'cave_air' || head.name === 'void_air');
+                const supported = bottom && bottom.name !== 'air' && bottom.name !== 'water' && bottom.name !== 'lava' &&
+                    (bottom.drops?.length > 0 || bottom.diggable === false);
+                if (!topEmpty || !headEmpty || !supported) {
                     empty = false;
                     break;
                 }

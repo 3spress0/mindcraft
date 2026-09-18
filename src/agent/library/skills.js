@@ -15,6 +15,7 @@ import { routeReconsiderationDue } from "../humanlike/reactions.js";
 import { scoreThreats } from "../autonomy/combat.js";
 import { logEvent } from "./structlog.js";
 import { getMetrics } from "./metrics.js";
+import { chooseReachableBlock } from "../baritone/baritone.js";
 
 const blockPlaceDelay = settings.block_place_delay == null ? 0 : settings.block_place_delay;
 const useDelay = blockPlaceDelay > 0;
@@ -470,15 +471,30 @@ export async function attackEntity(bot, entity, kill=true) {
         await bot.attack(entity);
     }
     else {
-        bot.pvp.attack(entity);
-        while (world.getNearbyEntities(bot, 24).includes(entity)) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            if (bot.interrupt_code) {
-                bot.pvp.stop();
-                return false;
+        // pvp.attack() is not a navigation command. Explicit attacks used to
+        // fail when the target was outside reach, and the old wait loop also
+        // waited forever for players because their entity remains nearby after
+        // taking damage. Walk into attack range first, then drive pvp while
+        // checking the entity's health/validity.
+        try {
+            if (bot.entity.position.distanceTo(entity.position) > 3.2) {
+                await goToGoal(bot, new pf.goals.GoalNear(
+                    entity.position.x, entity.position.y, entity.position.z, 2.8));
             }
+        } catch { /* target may move; pvp can still acquire it */ }
+        bot.pvp.attack(entity);
+        const started = Date.now();
+        while (!bot.interrupt_code && Date.now() - started < 30000) {
+            if (!entity.isValid || entity.health === 0 || !entity.position) break;
+            if (bot.entity.position.distanceTo(entity.position) > 4.5) {
+                try { await goToGoal(bot, new pf.goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2.8)); }
+                catch { /* keep attacking; target may be fleeing */ }
+            }
+            await new Promise(resolve => setTimeout(resolve, 250));
         }
-        log(bot, `Successfully killed ${entity.name}.`);
+        bot.pvp.stop();
+        if (bot.interrupt_code) return false;
+        log(bot, `Finished attacking ${entity.name}.`);
         await pickupNearbyItems(bot);
         return true;
     }
@@ -546,7 +562,18 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
         log(bot, `Invalid number of blocks to collect: ${num}.`);
         return false;
     }
-    let blocktypes = [blockType];
+    // Natural-language resource names must resolve to the actual blocks that
+    // exist in the world. In particular, `wood` is not a Minecraft block:
+    // trees expose species-specific logs. Search all log families together so
+    // a nearby tree is found instead of reporting a false negative.
+    if (blockType === 'wood' || blockType === 'log' || blockType === 'logs') {
+        blockType = 'wood';
+        blocktypes = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log',
+            'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log',
+            'crimson_stem', 'warped_stem'];
+    } else {
+        blocktypes = [blockType];
+    }
     if (blockType === 'coal' || blockType === 'diamond' || blockType === 'emerald' || blockType === 'iron' || blockType === 'gold' || blockType === 'lapis_lazuli' || blockType === 'redstone')
         blocktypes.push(blockType+'_ore');
     if (blockType.endsWith('ore'))
@@ -613,8 +640,11 @@ export async function collectBlock(bot, blockType, num=1, exclude=null) {
             if (isLiquid) {
                 success = await useToolOnBlock(bot, 'bucket', block);
             }
-            else if (mc.mustCollectManually(blockType)) {
-                await goToPosition(bot, block.position.x, block.position.y, block.position.z, 2);
+            else if (blockType === 'wood' || mc.mustCollectManually(blockType)) {
+                // collectblock expects one exact block name; tree wood is an
+                // alias, so use the Baritone-style reach -> equip -> dig path.
+                await goToPosition(bot, block.position.x, block.position.y, block.position.z, 3);
+                await bot.tool.equipForBlock(block);
                 await bot.dig(block);
                 await pickupNearbyItems(bot);
                 success = true;
@@ -882,9 +912,8 @@ export async function placeBlock(bot, blockType, x, y, z, placeOn='bottom', dont
     if (!dont_move_for.includes(item_name) && (pos.distanceTo(targetBlock.position) < 1.1 || pos_above.distanceTo(targetBlock.position) < 1.1)) {
         // too close
         let goal = new pf.goals.GoalNear(targetBlock.position.x, targetBlock.position.y, targetBlock.position.z, 2);
-        let inverted_goal = new pf.goals.GoalInvert(goal);
-        bot.pathfinder.setMovements(new pf.Movements(bot));
-        await bot.pathfinder.goto(inverted_goal);
+        const escape = new pf.goals.GoalRunAway(targetBlock.position, 2);
+        await goToGoal(bot, escape);
     }
     if (bot.entity.position.distanceTo(targetBlock.position) > 4.5) {
         // too far
@@ -1773,7 +1802,16 @@ export async function goToNearestBlock(bot, blockType,  min_distance=2, range=64
         block = blocks[0];
     }
     else {
-        block = world.getNearestBlock(bot, blockType, range);
+        // Probe several candidates and choose a reachable one rather than
+        // trusting the single nearest block returned by findBlocks.
+        try {
+            const chosen = await chooseReachableBlock(bot, blockType, {
+                radius: range, maxCandidates: 24, timeout: 500,
+            });
+            block = chosen?.block ?? null;
+        } catch {
+            block = world.getNearestBlock(bot, blockType, range);
+        }
     }
     if (!block) {
         log(bot, `Could not find any ${blockType} in ${range} blocks.`);
@@ -1918,13 +1956,16 @@ export async function moveAway(bot, distance) {
      * await skills.moveAway(bot, 8);
      **/
     const pos = bot.entity.position;
-    let goal = new pf.goals.GoalNear(pos.x, pos.y, pos.z, distance);
-    let inverted_goal = new pf.goals.GoalInvert(goal);
-    bot.pathfinder.setMovements(new pf.Movements(bot));
+    // Inverting a GoalNear around the bot has a backwards/negative heuristic
+    // and was the source of the characteristic low-health circles. Prefer a
+    // real threat as the repulsor; otherwise use a bounded escape goal from
+    // the current point.
+    const threat = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), 24);
+    const escape = new pf.goals.GoalRunAway(threat || pos, Math.max(4, distance));
 
     if (bot.modes.isOn('cheat')) {
         const move = new pf.Movements(bot);
-        const path = await bot.pathfinder.getPathTo(move, inverted_goal, 10000);
+        const path = await bot.pathfinder.getPathTo(move, escape, 10000);
         let last_move = path.path[path.path.length-1];
         if (last_move) {
             let x = Math.floor(last_move.x);
@@ -1935,7 +1976,7 @@ export async function moveAway(bot, distance) {
         }
     }
 
-    await goToGoal(bot, inverted_goal);
+    await goToGoal(bot, escape);
     let new_pos = bot.entity.position;
     log(bot, `Moved away from ${pos.floored()} to ${new_pos.floored()}.`);
     return true;
@@ -1949,10 +1990,11 @@ export async function moveAwayFromEntity(bot, entity, distance=16) {
      * @param {number} distance, the distance to move away.
      * @returns {Promise<boolean>} true if the bot moved away, false otherwise.
      **/
-    let goal = new pf.goals.GoalFollow(entity, distance);
-    let inverted_goal = new pf.goals.GoalInvert(goal);
-    bot.pathfinder.setMovements(new pf.Movements(bot));
-    await bot.pathfinder.goto(inverted_goal);
+    // GoalInvert(GoalFollow) has no useful distance heuristic and commonly
+    // produces orbiting/circling. GoalRunAway is a proper monotonic escape
+    // goal: it asks the pathfinder for a node outside the threat radius.
+    const escape = new pf.goals.GoalRunAway(entity, distance);
+    await goToGoal(bot, escape);
     return true;
 }
 
@@ -1968,11 +2010,11 @@ export async function avoidEnemies(bot, distance=16) {
     bot.modes.pause('self_preservation'); // prevents damage-on-low-health from interrupting the bot
     let enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), distance);
     while (enemy) {
-        const follow = new pf.goals.GoalFollow(enemy, distance+1); // move a little further away
-        const inverted_goal = new pf.goals.GoalInvert(follow);
-        bot.pathfinder.setMovements(new pf.Movements(bot));
-        bot.pathfinder.setGoal(inverted_goal, true);
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Re-plan from the live threat position. GoalInvert(GoalFollow) tends
+        // to orbit because its heuristic is not a distance-to-escape metric.
+        try { await goToGoal(bot, new pf.goals.GoalRunAway(enemy, distance + 1)); }
+        catch { /* threat may have despawned while planning */ }
+        await new Promise(resolve => setTimeout(resolve, 250));
         enemy = world.getNearestEntityWhere(bot, entity => mc.isHostile(entity), distance);
         if (bot.interrupt_code) {
             break;
@@ -1982,6 +2024,7 @@ export async function avoidEnemies(bot, distance=16) {
         }
     }
     bot.pathfinder.stop();
+    try { bot.modes.unpause('self_preservation'); } catch { /* optional */ }
     log(bot, `Moved ${distance} away from enemies.`);
     return true;
 }

@@ -25,6 +25,10 @@ export const PROFILES = {
         tweaks: {
             digCost: 10,
             placeCost: 2,
+            // mineflayer-pathfinder does not auto-jump unless parkour is
+            // enabled; keep the default profile capable of stepping over
+            // one-block obstacles.
+            allowParkour: true,
         },
     },
     legit: {

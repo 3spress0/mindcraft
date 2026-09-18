@@ -17,10 +17,22 @@ let Item = null;
  * Offline initialization for a pinned version (tests/scripts; idempotent).
  * Real bots still initialize themselves from the 'login' event.
  */
+export function getProtocolVersion(version) {
+    const entry = minecraftData.versions?.pc?.find?.(candidate => candidate.minecraftVersion === version);
+    return entry?.version ?? null;
+}
+
 export function initForVersion(version) {
     if (mcdata && mc_version === version) return mcdata;
     mc_version = version;
     mcdata = minecraftData(version);
+    if (!mcdata) {
+        const protocol = getProtocolVersion(version);
+        if (protocol != null) {
+            throw new Error(`minecraft-data exposes protocol ${protocol} for ${version}, but no gameplay data set is installed; update minecraft-data before starting native ${version}`);
+        }
+        throw new Error(`Unsupported Minecraft version: ${version}`);
+    }
     try { Item = prismarine_items(version); } catch { /* items optional */ }
     return mcdata;
 }
@@ -65,21 +77,41 @@ export const WOOL_COLORS = [
 ]
 
 
-export function initBot(username, overrides = {}) {
+export function resolveConnectionOptions(username, overrides = {}) {
+    const protocolMode = overrides.protocolMode ?? overrides.connection_mode
+        ?? settings.protocolMode ?? settings.connection_mode ?? 'native';
+    const proxy = overrides.viaProxy ?? overrides.via_proxy
+        ?? settings.viaProxy ?? settings.via_proxy ?? {};
+    const viaProxy = protocolMode === 'viaproxy' || proxy.enabled === true;
+    if (viaProxy && (!proxy.host || !Number.isInteger(Number(proxy.port)) || Number(proxy.port) < 1 || Number(proxy.port) > 65535)) {
+        throw new Error('ViaProxy mode is enabled but via_proxy.host and via_proxy.port are not configured');
+    }
     const selectedVersion = overrides.version ?? settings.minecraft_version ?? mc_version;
     const options = {
         username,
-        host: overrides.host ?? settings.host,
-        port: overrides.port ?? settings.port,
+        host: viaProxy ? proxy.host : (overrides.host ?? settings.host),
+        port: viaProxy ? Number(proxy.port) : (overrides.port ?? settings.port),
         auth: overrides.auth ?? settings.auth,
         version: selectedVersion,
         checkTimeoutInterval: overrides.checkTimeoutInterval ?? 60000, // slow remote/Aternos servers need a generous keep-alive window
     };
+    if (viaProxy) options.viaProxy = true;
+    return options;
+}
+
+export function initBot(username, overrides = {}) {
+    const options = resolveConnectionOptions(username, overrides);
+    const selectedVersion = options.version;
     if (!selectedVersion || selectedVersion === "auto") {
         delete options.version;
     }
 
     const bot = createBot(options);
+    if (options.viaProxy) {
+        bot.once('error', (error) => {
+            console.error(`[mcdata] ViaProxy connection failed at ${options.host}:${options.port}: ${error.message}`);
+        });
+    }
 
     // Throttle position packets to avoid kicks on Paper/Spigot servers
     // Paper enforces stricter packet rate limits than vanilla, causing ECONNRESET

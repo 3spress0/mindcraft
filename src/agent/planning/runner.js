@@ -369,19 +369,72 @@ export class PlanRunner {
         ].filter(Boolean).join('\n');
 
         let usedCommand = false;
-        try {
-            usedCommand = await this.agent.handleMessage('system', message, cfg.executor_max_responses, { transient: true });
-        } catch (err) {
-            if (String(err.name || err.message).includes('Abort')) throw err;
-            console.warn('[planning] executor turn error:', err.message);
+        let controllerResult = null;
+        const controller = this.agent.execution_controller;
+        const hasDeclaredSkill = step.skill && controller?.registry?.has?.(step.skill);
+        if (hasDeclaredSkill) {
+            // A declared skill is a deterministic execution boundary: the
+            // planner does not spend another LLM turn driving its internals.
+            const skillArgs = { ...(step.skillArgs || {}) };
+            try {
+                controllerResult = await controller.run(step.skill, skillArgs, {
+                    goalId: step.id,
+                    resume: step.attempts > 1 || Object.keys(step.skillProgress || {}).length > 0,
+                });
+                step.skillProgress = controllerResult.progress || step.skillProgress || {};
+                if (controllerResult.status === 'interrupted' && controllerResult.error) {
+                    // Safety recovery is itself a deterministic skill. Once it
+                    // completes, the same step can be retried with its saved
+                    // progress instead of asking the model to rediscover work.
+                    const interruptType = controllerResult.error.message.match(/Interrupted by ([^ ]+)/)?.[1] || '';
+                    if (/danger|health|entity|path\.blocked/.test(interruptType) && controller.registry.has('escape_danger')) {
+                        step.recoveryAttempts = (step.recoveryAttempts || 0) + 1;
+                        const maxRecoveryAttempts = 2;
+                        if (step.recoveryAttempts <= maxRecoveryAttempts) {
+                            const recovery = await controller.run('escape_danger', { distance: 16 }, { goalId: `${step.id}:recovery:${step.recoveryAttempts}` });
+                            // Do not immediately resume into the same danger.
+                            // DangerMonitor's active set is authoritative; a
+                            // persistent threat forces normal retry/replan
+                            // policy instead of an infinite gather/escape loop.
+                            const dangerStillActive = (this.agent.danger_monitor?.active?.size ?? 0) > 0;
+                            if (recovery.status === 'completed' && !dangerStillActive) {
+                                controllerResult = await controller.run(step.skill, skillArgs, {
+                                    goalId: step.id,
+                                    resume: true,
+                                });
+                                step.skillProgress = controllerResult.progress || step.skillProgress || {};
+                            }
+                        } else {
+                            controllerResult.error = new Error(`recovery budget exhausted after ${maxRecoveryAttempts} attempts`);
+                        }
+                    }
+                }
+                if (controllerResult?.status === 'completed') step.recoveryAttempts = 0;
+                usedCommand = true;
+            } catch (err) {
+                if (String(err.name || err.message).includes('Abort')) throw err;
+                console.warn(`[planning] deterministic skill ${step.skill} failed:`, err.message);
+                controllerResult = { status: 'failed', error: err };
+            }
+        } else {
+            try {
+                usedCommand = await this.agent.handleMessage('system', message, cfg.executor_max_responses, { transient: true });
+            } catch (err) {
+                if (String(err.name || err.message).includes('Abort')) throw err;
+                console.warn('[planning] executor turn error:', err.message);
+            }
         }
         // Give the world a beat to settle (items drop, block updates arrive).
         await sleep(300);
         const after = captureState(this.agent);
 
-        const critique = await this.critic.evaluate(step, before, after, this.agent.bot.output || '', {
-            freeformJudge: cfg.freeform_critic ? undefined : async () => null,
-        });
+        const executionOutput = controllerResult
+            ? `ExecutionController ${controllerResult.status}: ${controllerResult.error?.message || JSON.stringify(controllerResult.value ?? {})}`
+            : '';
+        const critique = await this.critic.evaluate(step, before, after,
+            [this.agent.bot.output || '', executionOutput].filter(Boolean).join('\n'), {
+                freeformJudge: cfg.freeform_critic ? undefined : async () => null,
+            });
         this.agent.bot.output = '';
         void usedCommand;
         return { before, after, critique };

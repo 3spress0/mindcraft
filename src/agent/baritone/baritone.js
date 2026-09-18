@@ -23,6 +23,7 @@ import { applyProfile, getProfileName, profileAvoidsHazards } from './settings.j
 import * as humanlike from '../humanlike/interaction.js';
 import { hardenMovements } from '../navigation/hazards.js';
 import { ensureUsableTool } from '../library/durability.js';
+import { findBlockCandidates, expandBlockNames } from '../navigation/block_index.js';
 
 /**
  * Ore prioritization (GO list: ore prioritization / resource priorities):
@@ -89,6 +90,56 @@ export function buildMovements(bot, profile = null) {
     applyProfile(movements, active);
     if (profileAvoidsHazards(active)) hardenMovements(movements, bot);
     return movements;
+}
+
+/**
+ * Baritone-style target selection: do not trust the single nearest block.
+ * Probe several loaded candidates and return the cheapest reachable target.
+ * Failed candidates are returned to the caller through `rejected`, allowing
+ * mining processes to blacklist them instead of retrying forever.
+ */
+export async function chooseReachableBlock(bot, names, {
+    radius = 96, maxCandidates = 24, profile = null, timeout = 450,
+    exclude = new Set(), rejected = null,
+} = {}) {
+    const candidates = findBlockCandidates(bot, expandBlockNames(names), {
+        radius, max: maxCandidates,
+        exclude: [...exclude].map(key => {
+            const [x, y, z] = String(key).split(',').map(Number);
+            return { x, y, z };
+        }),
+    });
+    // Lightweight/self-test drivers may not expose synchronous path probing.
+    // Preserve their deterministic nearest-candidate behavior; live bots get
+    // the full reachability scoring below.
+    if (typeof bot.pathfinder?.getPathTo !== 'function') {
+        const first = candidates[0];
+        return first ? { ...first, key: `${Math.floor(first.position.x)},${Math.floor(first.position.y)},${Math.floor(first.position.z)}` } : null;
+    }
+    const movements = buildMovements(bot, profile);
+    const scored = [];
+    for (const candidate of candidates) {
+        const p = candidate.position;
+        const key = `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`;
+        if (exclude.has(key)) continue;
+        try {
+            const result = bot.pathfinder.getPathTo(
+                movements,
+                new goals.GoalGetToBlock(p.x, p.y, p.z),
+                timeout,
+            );
+            if (result?.status === 'success') {
+                scored.push({ ...candidate, key, cost: result.cost ?? result.path?.length ?? Infinity,
+                    nodes: result.path?.length ?? 0 });
+            } else if (rejected) {
+                rejected.add(key);
+            }
+        } catch {
+            if (rejected) rejected.add(key);
+        }
+    }
+    scored.sort((a, b) => a.cost - b.cost || a.nodes - b.nodes);
+    return scored[0] ?? null;
 }
 
 /**
@@ -214,6 +265,7 @@ export async function mineBlocks(bot, blockType, count = 1, opts = {}) {
     const veinSeen = new Set();
     const veinQueue = [];
     const skippedUnsafe = new Set(); // positions refused by the lava probe
+    const failedTargets = new Set(); // unreachable/stale targets for this run
     let mined = 0;
     let reason = 'completed';
     // mine entrance management: remember where this run started so we can
@@ -246,26 +298,26 @@ export async function mineBlocks(bot, blockType, count = 1, opts = {}) {
         // Vein leftovers first, then the next nearest occurrence.
         let target = veinQueue.shift() || null;
         if (!target) {
-            if (types.length === 1) {
-                target = world.getNearestBlock(bot, types[0], range);
-            } else {
-                // Ore prioritization: nearest of each type, dig the
-                // highest-priority one first.
-                let best = null;
-                let bestRank = Infinity;
-                for (const t of types) {
-                    const b = world.getNearestBlock(bot, t, range);
-                    if (!b) continue;
-                    const rank = orePriorityRank(t);
-                    if (rank < bestRank) { bestRank = rank; best = b; }
-                }
-                target = best;
-            }
+            // Baritone's #mine does not blindly select the nearest block. Probe
+            // several loaded candidates and choose one with a valid path.
+            // Keep failed positions out of subsequent scans for this run.
+            const rejected = new Set([...skippedUnsafe, ...failedTargets]);
+            const chosen = await chooseReachableBlock(bot, types, {
+                radius: range,
+                maxCandidates: opts.maxCandidates || 32,
+                profile: opts.profile,
+                timeout: opts.pathTimeout || 700,
+                exclude: rejected,
+                rejected,
+            });
+            for (const key of rejected) failedTargets.add(key);
+            target = chosen?.block ?? null;
             if (!target) {
                 const label = types.length === 1 ? types[0] : types.join('/');
-                reason = mined > 0
-                    ? `no more ${label} within ${range} blocks`
-                    : `no ${label} found within ${range} blocks`;
+                const hadRejectedTargets = failedTargets.size > 0 || skippedUnsafe.size > 0;
+                reason = hadRejectedTargets
+                    ? (mined > 0 ? `no reachable ${label} within ${range} blocks` : `no reachable ${label} found within ${range} blocks`)
+                    : (mined > 0 ? `no more ${label} within ${range} blocks` : `no ${label} found within ${range} blocks`);
                 break;
             }
         }

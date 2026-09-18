@@ -37,6 +37,8 @@ import { MentalMap, noteBedIfNear } from './memory/mental_map.js';
 import { ReactionGate, detectSocialEvents, reactionMessage } from './social/reactions.js';
 import settings from './settings.js';
 import { Task } from './tasks/tasks.js';
+import { EventBus, ExecutionController, registerBuiltinSkills, FileExecutionStateStore } from './execution/index.js';
+import { DangerMonitor } from './execution/danger_monitor.js';
 import { speak } from './speak.js';
 import { log, validateNameFormat, handleDisconnection } from './connection_handler.js';
 import path from 'path';
@@ -58,6 +60,17 @@ export class Agent {
 
         // Initialize components
         this.actions = new ActionManager(this);
+        // High-level skills own task execution; the LLM/planner should submit
+        // one goal instead of competing with Mineflayer at every tick.
+        this.event_bus = new EventBus();
+        this.execution_state_store = new FileExecutionStateStore(this.name || 'bot');
+        this.execution_controller = new ExecutionController({
+            agent: this,
+            eventBus: this.event_bus,
+            stateStore: this.execution_state_store,
+        });
+        registerBuiltinSkills(this.execution_controller);
+        this.executionController = this.execution_controller; // public alias for integrations
         this.prompter = new Prompter(this, settings.profile);
         this.name = (this.prompter.getName() || '').trim();
         console.log(`Initializing agent ${this.name}...`);
@@ -109,6 +122,35 @@ export class Agent {
 
         console.log(this.name, 'logging into minecraft...');
         this.bot = initBot(this.name);
+        this.execution_controller.bot = this.bot;
+        // Translate only execution-relevant Mineflayer events into stable
+        // runtime events. Skills can now react without knowing Mineflayer's
+        // event names, and tests can publish the same events directly.
+        const publishExecutionEvent = (type, data = {}) => {
+            this.event_bus.publish(type, data, { source: 'mineflayer' }).catch(error => {
+                console.warn(`[execution] failed to publish ${type}: ${error.message}`);
+            });
+        };
+        this.bot.on('health', () => {
+            const health = Number(this.bot.health);
+            publishExecutionEvent(health > 0 && health <= 6 ? 'health.low' : 'health.changed', { health });
+        });
+        this.bot.on('death', () => publishExecutionEvent('player.died', {}));
+        this.bot.on('blockUpdate', (oldBlock, newBlock) => publishExecutionEvent('world.block_changed', {
+            old: oldBlock?.name ?? null, new: newBlock?.name ?? null,
+            position: newBlock?.position ?? oldBlock?.position ?? null,
+        }));
+        this.bot.on('entitySpawn', entity => publishExecutionEvent('world.entity_found', {
+            name: entity?.name ?? null, type: entity?.type ?? null, position: entity?.position ?? null,
+        }));
+        this.bot.on('entityGone', entity => publishExecutionEvent('world.entity_lost', {
+            name: entity?.name ?? null, id: entity?.id ?? null,
+        }));
+        this.bot.on('kicked', reason => publishExecutionEvent('server.disconnected', { reason }));
+        this.bot.on('end', reason => publishExecutionEvent('server.disconnected', { reason }));
+        this.bot.on('error', error => publishExecutionEvent('system.error', { message: error?.message ?? String(error) }));
+        this.bot.on('inventoryOpen', window => publishExecutionEvent('inventory.changed', { type: window?.type ?? null }));
+        this.bot.on('setSlot', data => publishExecutionEvent('inventory.changed', { slot: data?.slot ?? null }));
         
         // Connection Handler
         const onDisconnect = (event, reason) => {
@@ -277,6 +319,12 @@ export class Agent {
                 
                 console.log(`${this.name} spawned.`);
                 this.clearBotLogs();
+                this.danger_monitor = new DangerMonitor({
+                    bot: this.bot,
+                    eventBus: this.event_bus,
+                    pollMs: settings.execution?.danger_poll_ms ?? 250,
+                    healthThreshold: settings.planning?.danger_health_threshold ?? 6,
+                }).start();
               
                 this._setupEventHandlers(save_data, init_message);
                 this.startEvents();
@@ -416,6 +464,19 @@ export class Agent {
             console.log(`Missing players/bots: ${missingPlayers.join(', ')}`);
             this.cleanKill('Not all required players/bots are present in the world. Exiting.', 4);
         }
+    }
+
+    runSkill(skillName, args = {}, options = {}) {
+        if (!this.execution_controller) throw new Error('Execution controller is not initialized');
+        return this.execution_controller.run(skillName, args, options);
+    }
+
+    recoverExecutionState() {
+        return this.execution_controller?.recoverableState?.() ?? Promise.resolve(null);
+    }
+
+    cancelSkill(reason = 'cancelled by agent') {
+        return this.execution_controller?.cancel?.(reason) ?? false;
     }
 
     requestInterrupt() {

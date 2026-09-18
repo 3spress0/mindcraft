@@ -9,15 +9,20 @@
 
 import * as mc from '../../utils/mcdata.js';
 
-/** Damage/death blocks: never step into these if a route around exists. */
+/**
+ * Damage/death blocks: never step into these if a route around exists.
+ * This mirrors real Baritone's MovementHelper#avoidWalkingInto: fluids,
+ * magma, cactus, sweet berry bush, fire variants and cobweb are hard hazards.
+ * Soul sand and honey remain soft hazards because they are walkable.
+ */
 export const HARD_HAZARDS = [
     'lava', 'fire', 'soul_fire', 'magma_block', 'campfire', 'soul_campfire',
-    'sweet_berry_bush', 'cactus', 'wither_rose', 'powder_snow'
+    'sweet_berry_bush', 'cactus', 'wither_rose', 'powder_snow', 'cobweb', 'web'
 ];
 
-/** Trap/slowdown blocks: passable, but preferred avoided on safe routes. */
+/** Trap/slowdown blocks: passable, but reported rather than hard-blocked. */
 export const SOFT_HAZARDS = [
-    'soul_sand', 'honey_block', 'cobweb', 'web'
+    'soul_sand', 'honey_block'
 ];
 
 const TIER_MAP = new Map();
@@ -34,14 +39,18 @@ export function isHazard(blockName) {
 }
 
 /**
- * Add hazard block ids to a Movements-like object's blocksToAvoid set.
- * Registry-guarded, so unknown versions simply skip missing blocks.
- * Returns the movements object.
+ * Add hard hazard block ids to a Movements-like object's blocksToAvoid set.
+ * entityCost approximates Baritone's mob-avoidance coefficient when supported.
+ * `includeSoft` remains accepted for API compatibility; soft hazards are never
+ * hard-blocked because pathfinder exposes no per-block cost hook.
  */
-export function hardenMovements(movements, bot, { includeSoft = true } = {}) {
+export function hardenMovements(movements, bot, { includeSoft = true, mobAvoidance = 3 } = {}) {
     if (!movements?.blocksToAvoid) return movements;
+    if (typeof movements.entityCost === 'number' && mobAvoidance > 0) {
+        movements.entityCost = Math.max(movements.entityCost, mobAvoidance);
+    }
     const registry = bot?.registry;
-    const names = includeSoft ? [...HARD_HAZARDS, ...SOFT_HAZARDS] : [...HARD_HAZARDS];
+    const names = [...HARD_HAZARDS];
     for (const name of names) {
         let id = null;
         try {
