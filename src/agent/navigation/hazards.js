@@ -17,12 +17,11 @@ import * as mc from '../../utils/mcdata.js';
  */
 export const HARD_HAZARDS = [
     'lava', 'fire', 'soul_fire', 'magma_block', 'campfire', 'soul_campfire',
-    'sweet_berry_bush', 'cactus', 'wither_rose', 'powder_snow', 'cobweb', 'web'
+    'sweet_berry_bush', 'cactus', 'wither_rose', 'powder_snow'
 ];
 
-/** Trap/slowdown blocks: passable, but reported rather than hard-blocked. */
 export const SOFT_HAZARDS = [
-    'soul_sand', 'honey_block'
+    'soul_sand', 'honey_block', 'cobweb', 'web'
 ];
 
 const TIER_MAP = new Map();
@@ -50,7 +49,7 @@ export function hardenMovements(movements, bot, { includeSoft = true, mobAvoidan
         movements.entityCost = Math.max(movements.entityCost, mobAvoidance);
     }
     const registry = bot?.registry;
-    const names = [...HARD_HAZARDS];
+    const names = includeSoft ? [...HARD_HAZARDS, ...SOFT_HAZARDS] : [...HARD_HAZARDS];
     for (const name of names) {
         let id = null;
         try {
